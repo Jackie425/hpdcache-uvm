@@ -2,7 +2,7 @@
 package hpdcache_uvm_components_pkg;
   import uvm_pkg::*;
   import hpdcache_pkg::*;
-  import hpdcache_cva6_config_pkg::*;
+  import `HPDCACHE_CONFIG_PKG::*;
   import hpdcache_cva6_types_pkg::*;
   import clock_driver_pkg::*;
   import reset_driver_pkg::*;
@@ -10,19 +10,28 @@ package hpdcache_uvm_components_pkg;
   import axi2mem_pkg::*;
   `include "uvm_macros.svh"
 
-  `include "hpdcache_item.svh"
-  `include "hpdcache_agent_config.svh"
-  `include "hpdcache_sequencer.svh"
-  `include "hpdcache_driver.svh"
-  `include "hpdcache_monitor.svh"
-  `include "hpdcache_agent.svh"
+  `include "hpdcache_pma_config.svh"
+  `include "hpdcache_cri_agent_config.svh"
+  `include "hpdcache_env_config.svh"
+  `include "hpdcache_cri_item.svh"
+  `include "hpdcache_cmi_item.svh"
+  `include "hpdcache_cri_sequencer.svh"
+  `include "hpdcache_cri_driver.svh"
+  `include "hpdcache_cri_monitor.svh"
+  `include "hpdcache_cri_agent.svh"
   `include "hpdcache_reference_model.svh"
   `include "hpdcache_predictor.svh"
-  `include "hpdcache_evaluator.svh"
+  `include "hpdcache_cacheable_evaluator.svh"
+  `include "hpdcache_uncacheable_evaluator.svh"
   `include "hpdcache_scoreboard.svh"
+  `include "hpdcache_cmi_monitor.svh"
+  `include "hpdcache_cmi_agent.svh"
   `include "hpdcache_env.svh"
-  `include "hpdcache_base_sequence.svh"
-  `include "hpdcache_random_sequence.svh"
+  `include "hpdcache_base_seq.svh"
+  `include "hpdcache_random_seq_api.svh"
+  `include "hpdcache_random_seq.svh"
+  `include "hpdcache_base_vseq.svh"
+  `include "hpdcache_random_vseq.svh"
   `include "hpdcache_base_test.svh"
   `include "hpdcache_random_test.svh"
 endpackage

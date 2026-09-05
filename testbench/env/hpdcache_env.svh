@@ -1,10 +1,9 @@
 class hpdcache_env extends uvm_env;
   `uvm_component_utils(hpdcache_env)
 
-  localparam int unsigned NUM_CORE_REQUESTERS = NREQUESTERS - 1;
-
-  hpdcache_agent        agents[NREQUESTERS];
-  hpdcache_agent_config agent_configs[NREQUESTERS];
+  hpdcache_env_config cfg;
+  hpdcache_cri_agent cri_agents[NREQUESTERS];
+  hpdcache_cmi_agent cmi_agent;
   hpdcache_scoreboard scoreboard;
   memory_response_model #(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH) mem_rsp_model;
   axi2mem #(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH, 1) axi_bridge;
@@ -19,8 +18,16 @@ class hpdcache_env extends uvm_env;
 
   function void build_phase(uvm_phase phase);
     super.build_phase(phase);
-    scoreboard = hpdcache_scoreboard::type_id::create("scoreboard", this);
+    if (!uvm_config_db#(hpdcache_env_config)::get(this, "", "cfg", cfg) ||
+        cfg == null)
+      `uvm_fatal(get_type_name(), "hpdcache_env_config was not configured")
+    cfg.validate();
 
+    uvm_config_db#(hpdcache_pma_config)::set(
+      this, "scoreboard", "pma_cfg", cfg.pma_cfg
+    );
+    scoreboard = hpdcache_scoreboard::type_id::create("scoreboard", this);
+    cmi_agent = hpdcache_cmi_agent::type_id::create("cmi_agent", this);
     clock_driver = clock_driver_c::type_id::create("clock_driver", this);
     clock_cfg = clock_config_c::type_id::create("clock_cfg", this);
     clock_driver.m_clk_cfg = clock_cfg;
@@ -29,32 +36,15 @@ class hpdcache_env extends uvm_env;
     );
 
     for (int unsigned i = 0; i < NREQUESTERS; i++) begin
-      agent_configs[i] = hpdcache_agent_config::type_id::create(
-        $sformatf("agent_%0d_cfg", i)
+      uvm_config_db#(hpdcache_cri_agent_config)::set(
+        this, $sformatf("cri_agent_%0d", i), "cfg", cfg.cri_agent_cfgs[i]
       );
-      agent_configs[i].active = i < NUM_CORE_REQUESTERS;
-      agent_configs[i].requester_id = i;
-      agents[i] = hpdcache_agent::type_id::create(
-        $sformatf("agent_%0d", i), this
-      );
-      uvm_config_db#(hpdcache_agent_config)::set(
-        agents[i], "", "cfg", agent_configs[i]
+      cri_agents[i] = hpdcache_cri_agent::type_id::create(
+        $sformatf("cri_agent_%0d", i), this
       );
     end
 
-    mem_cfg = memory_rsp_cfg::type_id::create("mem_cfg");
-    mem_cfg.m_enable = 1'b1;
-    mem_cfg.rsp_order = IN_ORDER_RSP;
-    mem_cfg.rsp_mode = ZERO_DELAY_RSP;
-    mem_cfg.inter_data_cycle_fixed_delay = 0;
-    mem_cfg.insert_wr_error = 1'b0;
-    mem_cfg.insert_rd_error = 1'b0;
-    mem_cfg.insert_amo_wr_error = 1'b0;
-    mem_cfg.insert_amo_rd_error = 1'b0;
-    mem_cfg.insert_wr_exclusive_fail = 1'b0;
-    mem_cfg.insert_rd_exclusive_fail = 1'b0;
-    mem_cfg.unsolicited_rsp = 1'b0;
-    mem_cfg.m_bp = NEVER;
+    mem_cfg = cfg.mem_cfg;
 
     mem_rsp_model = memory_response_model#(
       MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH
@@ -76,19 +66,25 @@ class hpdcache_env extends uvm_env;
 
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    foreach (agents[i])
-      agents[i].monitor.ap.connect(scoreboard.request_export);
-    foreach (agents[i])
-      agents[i].monitor.ap.connect(scoreboard.actual_export);
+    foreach (cri_agents[i])
+      cri_agents[i].monitor.request_ap.connect(scoreboard.request_export);
+    foreach (cri_agents[i])
+      cri_agents[i].monitor.response_ap.connect(scoreboard.response_export);
+    cmi_agent.monitor.request_ap.connect(scoreboard.cmi_request_export);
+    cmi_agent.monitor.response_ap.connect(scoreboard.cmi_response_export);
     mem_rsp_model.m_rsp_cfg = mem_cfg;
-    mem_rsp_model.ap_mem_rd_rsp.connect(scoreboard.memory_response_export);
+    mem_rsp_model.ap_mem_rd_rsp.connect(
+      scoreboard.memory_read_response_export
+    );
   endfunction
 
   function automatic bit is_drained();
     if (!scoreboard.is_idle())
       return 1'b0;
-    foreach (agents[i]) begin
-      if (!agents[i].is_idle())
+    if (!cmi_agent.is_idle())
+      return 1'b0;
+    foreach (cri_agents[i]) begin
+      if (!cri_agents[i].is_idle())
         return 1'b0;
     end
     return 1'b1;
@@ -96,13 +92,15 @@ class hpdcache_env extends uvm_env;
 
   function automatic string drain_status();
     string status;
-    status = scoreboard.drain_status();
-    foreach (agents[i]) begin
-      if (agents[i].cfg.active)
+    status = {scoreboard.drain_status(), $sformatf(
+      " cmi_agent_idle=%0b", cmi_agent.is_idle())};
+    foreach (cri_agents[i]) begin
+      if (cri_agents[i].cfg.active)
         status = {status, $sformatf(
-          " agent_%0d_driver_idle=%0b agent_%0d_outstanding_tids=%0d",
-          i, agents[i].driver.is_idle(), i,
-          agents[i].cfg.tid_manager.num_outstanding())};
+          " cri_agent_%0d_monitor_idle=%0b cri_agent_%0d_driver_idle=%0b cri_agent_%0d_outstanding_tids=%0d",
+          i, cri_agents[i].monitor.is_idle(), i,
+          cri_agents[i].driver.is_idle(), i,
+          cri_agents[i].sequencer.num_outstanding())};
     end
     return status;
   endfunction
@@ -123,5 +121,22 @@ class hpdcache_env extends uvm_env;
     join_any
     disable drain_or_timeout;
   endtask
+
+  virtual function void report_phase(uvm_phase phase);
+    int unsigned driver_outstanding = 0;
+    int unsigned sequencer_outstanding = 0;
+
+    super.report_phase(phase);
+    foreach (cri_agents[i]) begin
+      if (!cri_agents[i].cfg.active)
+        continue;
+      driver_outstanding += cri_agents[i].driver.num_outstanding();
+      sequencer_outstanding += cri_agents[i].sequencer.num_outstanding();
+    end
+    `uvm_info("HPDCACHE_RPT_DRAIN", $sformatf(
+      "drained=%0d scoreboard_idle=%0d cmi_idle=%0d driver_outstanding=%0d sequencer_outstanding=%0d",
+      is_drained(), scoreboard.is_idle(), cmi_agent.is_idle(),
+      driver_outstanding, sequencer_outstanding), UVM_NONE)
+  endfunction
 
 endclass

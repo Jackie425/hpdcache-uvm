@@ -4,13 +4,11 @@
 // Makefile. Keep sources in dependency order: parameters and RTL first,
 // followed by the memory model and the UVM testbench.
 
-+define+HPDCACHE_ASSERT_OFF
-
-// HPDcache RTL and the fixed CVA6 configuration.
+// HPDcache RTL and the selected DV configuration.
 +incdir+${HPDCACHE_DIR}/rtl/include
 +incdir+${HPDCACHE_DIR}/rtl/src/utils/ecc
 ${HPDCACHE_DIR}/rtl/include/hpdcache_typedef.svh
-${CONFIG_DIR}/hpdcache_cva6_config_pkg.sv
+${HPDCACHE_CONFIG_FILE}
 -F ${HPDCACHE_DIR}/rtl/hpdcache.Flist
 
 // ECC support and behavioral SRAM macros required by the RTL.
@@ -47,12 +45,20 @@ ${CORE_V_VERIF}/lib/cv_dv_utils/uvm/memory_rsp_model/axi2mem/axi2mem_pkg.sv
 ${CORE_V_VERIF}/lib/cv_dv_utils/uvm/memory_rsp_model/axi2mem/axi_intf.sv
 
 // Minimal CVA6-only UVM environment and random test.
-+incdir+testbench/hpdcache_agent
-+incdir+testbench/hpdcache_agent/sequences
++incdir+testbench/config
++incdir+testbench/hpdcache_cri_agent
++incdir+testbench/hpdcache_cri_agent/items
++incdir+testbench/hpdcache_cri_agent/sequences
++incdir+testbench/hpdcache_cri_agent/sequences/api
++incdir+testbench/hpdcache_cri_agent/sequences/worker
++incdir+testbench/vsequences
++incdir+testbench/hpdcache_cmi_agent
++incdir+testbench/hpdcache_cmi_agent/items
 +incdir+testbench/env
 +incdir+testbench/tests
 +incdir+testbench/tests/basic_test
-testbench/common/hpdcache_cva6_types_pkg.sv
-testbench/hpdcache_agent/hpdcache_if.sv
+testbench/types/hpdcache_cva6_types_pkg.sv
+testbench/hpdcache_cri_agent/hpdcache_cri_if.sv
+testbench/hpdcache_cmi_agent/hpdcache_cmi_if.sv
 testbench/hpdcache_uvm_components_pkg.sv
 testbench/top.sv

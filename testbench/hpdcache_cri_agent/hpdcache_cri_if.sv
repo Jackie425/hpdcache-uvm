@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-interface hpdcache_if (
+interface hpdcache_cri_if (
   input logic clk_i,
   input logic rst_ni
 );
@@ -19,11 +19,11 @@ interface hpdcache_if (
   // Driver-side signals are separate from the observed bus.  This lets a
   // passive instance observe an externally driven requester without its
   // clocking-block outputs becoming additional bus drivers.
-  logic          drv_req_valid;
-  hpdcache_req_t drv_req;
-  logic          drv_req_abort;
-  hpdcache_tag_t drv_req_tag;
-  hpdcache_pma_t drv_req_pma;
+  logic          drv_req_valid = 1'b0;
+  hpdcache_req_t drv_req = '0;
+  logic          drv_req_abort = 1'b0;
+  hpdcache_tag_t drv_req_tag = '0;
+  hpdcache_pma_t drv_req_pma = '0;
 
   // Response channel
   logic          rsp_valid;

@@ -1,0 +1,9 @@
+schema: 1
+name: smoke
+
+defaults:
+  verbosity: UVM_LOW
+
+tests:
+  - test: hpdcache_random_test
+    runs: 2

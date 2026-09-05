@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 package hpdcache_cva6_types_pkg;
   import hpdcache_pkg::*;
-  import hpdcache_cva6_config_pkg::*;
+  import `HPDCACHE_CONFIG_PKG::*;
   `include "hpdcache_typedef.svh"
 
   localparam hpdcache_user_cfg_t HPDCACHE_USER_CFG = '{

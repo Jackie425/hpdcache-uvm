@@ -3,3 +3,5 @@ build/
 *.log
 *.wlf
 transcript
+__pycache__/
+*.py[cod]

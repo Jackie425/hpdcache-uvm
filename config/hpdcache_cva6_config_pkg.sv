@@ -10,7 +10,8 @@
  */
 
 // SPDX-License-Identifier: Apache-2.0
-// Fixed HPDcache configuration used by the CVA6 integration.
+// Fixed HPDcache configuration corresponding to CVA6's
+// cv64a6_imafdc_sv39_hpdcache_wb_config_pkg.
 package hpdcache_cva6_config_pkg;
   localparam int unsigned PA_WIDTH = 56;
   localparam int unsigned SETS = 256;
@@ -45,6 +46,7 @@ package hpdcache_cva6_config_pkg;
 
   // Four CVA6 LSU requesters plus the hardware-prefetch requester.
   localparam int unsigned NREQUESTERS = 5;
+  localparam bit HAS_PREFETCHER = 1'b1;
   localparam int unsigned MEM_ADDR_WIDTH = 64;
   localparam int unsigned MEM_ID_WIDTH = 4;
   localparam int unsigned MEM_DATA_WIDTH = 64;

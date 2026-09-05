@@ -6,7 +6,7 @@ module top;
   import uvm_pkg::*;
   import hpdcache_pkg::*;
   import hwpf_stride_pkg::*;
-  import hpdcache_cva6_config_pkg::*;
+  import `HPDCACHE_CONFIG_PKG::*;
   import hpdcache_cva6_types_pkg::*;
   import hpdcache_uvm_components_pkg::*;
   import clock_driver_pkg::*;
@@ -14,7 +14,8 @@ module top;
   import memory_rsp_model_pkg::*;
   import axi2mem_pkg::*;
 
-  localparam int unsigned NUM_CORE_REQUESTERS = NREQUESTERS - 1;
+  localparam int unsigned NUM_CORE_REQUESTERS =
+    NREQUESTERS - (HAS_PREFETCHER ? 1 : 0);
   localparam int unsigned PREFETCH_REQUESTER = NREQUESTERS - 1;
   localparam int unsigned NUM_HW_PREFETCH = 4;
 
@@ -38,34 +39,26 @@ module top;
   logic          core_rsp_valid[NREQUESTERS];
   hpdcache_rsp_t core_rsp[NREQUESTERS];
 
-  hpdcache_if requester_if[NREQUESTERS](.clk_i(clk), .rst_ni(rst_n));
+  hpdcache_cri_if cri_if[NREQUESTERS](.clk_i(clk), .rst_ni(rst_n));
 
   for (genvar requester = 0; requester < NREQUESTERS; requester++) begin : gen_requester_monitors
-    assign requester_if[requester].req_ready = core_req_ready[requester];
-    assign requester_if[requester].req_valid = core_req_valid[requester];
-    assign requester_if[requester].req       = core_req[requester];
-    assign requester_if[requester].req_abort = core_req_abort[requester];
-    assign requester_if[requester].req_tag   = core_req_tag[requester];
-    assign requester_if[requester].req_pma   = core_req_pma[requester];
-    assign requester_if[requester].rsp_valid = core_rsp_valid[requester];
-    assign requester_if[requester].rsp       = core_rsp[requester];
+    assign cri_if[requester].req_ready = core_req_ready[requester];
+    assign cri_if[requester].req_valid = core_req_valid[requester];
+    assign cri_if[requester].req       = core_req[requester];
+    assign cri_if[requester].req_abort = core_req_abort[requester];
+    assign cri_if[requester].req_tag   = core_req_tag[requester];
+    assign cri_if[requester].req_pma   = core_req_pma[requester];
+    assign cri_if[requester].rsp_valid = core_rsp_valid[requester];
+    assign cri_if[requester].rsp       = core_rsp[requester];
 
     initial begin
-      uvm_config_db#(virtual hpdcache_if)::set(
+      uvm_config_db#(virtual hpdcache_cri_if)::set(
         null,
-        $sformatf("uvm_test_top.env.agent_%0d.*", requester),
+        $sformatf("uvm_test_top.env.cri_agent_%0d.*", requester),
         "vif",
-        requester_if[requester]
+        cri_if[requester]
       );
     end
-  end
-
-  for (genvar requester = 0; requester < NUM_CORE_REQUESTERS; requester++) begin : gen_core_drivers
-    assign core_req_valid[requester] = requester_if[requester].drv_req_valid;
-    assign core_req[requester]       = requester_if[requester].drv_req;
-    assign core_req_abort[requester] = requester_if[requester].drv_req_abort;
-    assign core_req_tag[requester]   = requester_if[requester].drv_req_tag;
-    assign core_req_pma[requester]   = requester_if[requester].drv_req_pma;
   end
 
   logic          prefetch_req_valid;
@@ -77,14 +70,13 @@ module top;
   logic          prefetch_rsp_valid;
   hpdcache_rsp_t prefetch_rsp;
 
-  assign core_req_valid[PREFETCH_REQUESTER] = prefetch_req_valid;
-  assign prefetch_req_ready                 = core_req_ready[PREFETCH_REQUESTER];
-  assign core_req[PREFETCH_REQUESTER]       = prefetch_req;
-  assign core_req_abort[PREFETCH_REQUESTER] = prefetch_req_abort;
-  assign core_req_tag[PREFETCH_REQUESTER]   = prefetch_req_tag;
-  assign core_req_pma[PREFETCH_REQUESTER]   = prefetch_req_pma;
-  assign prefetch_rsp_valid                 = core_rsp_valid[PREFETCH_REQUESTER];
-  assign prefetch_rsp                       = core_rsp[PREFETCH_REQUESTER];
+  for (genvar requester = 0; requester < NUM_CORE_REQUESTERS; requester++) begin : gen_core_drivers
+    assign core_req_valid[requester] = cri_if[requester].drv_req_valid;
+    assign core_req[requester]       = cri_if[requester].drv_req;
+    assign core_req_abort[requester] = cri_if[requester].drv_req_abort;
+    assign core_req_tag[requester]   = cri_if[requester].drv_req_tag;
+    assign core_req_pma[requester]   = cri_if[requester].drv_req_pma;
+  end
 
   // --------------------------------------------------------------------------
   // CVA6 stride prefetcher: fully connected, but disabled by zeroed CSRs.
@@ -115,56 +107,67 @@ module top;
   assign hwpf_throttle_i   = '0;
 
   for (genvar snoop = 0; snoop < NUM_CORE_REQUESTERS; snoop++) begin : gen_snoop
-    assign snoop_valid[snoop] = requester_if[snoop].req_valid &&
-                                requester_if[snoop].req_ready;
-    assign snoop_abort[snoop] = requester_if[snoop].req_abort;
-    assign snoop_offset[snoop] = requester_if[snoop].req.addr_offset;
-    assign snoop_tag[snoop] = requester_if[snoop].req.phys_indexed ?
-                              requester_if[snoop].req.addr_tag :
-                              requester_if[snoop].req_tag;
-    assign snoop_phys_indexed[snoop] = requester_if[snoop].req.phys_indexed;
+    assign snoop_valid[snoop] = cri_if[snoop].req_valid &&
+                                cri_if[snoop].req_ready;
+    assign snoop_abort[snoop] = cri_if[snoop].req_abort;
+    assign snoop_offset[snoop] = cri_if[snoop].req.addr_offset;
+    assign snoop_tag[snoop] = cri_if[snoop].req.phys_indexed ?
+                              cri_if[snoop].req.addr_tag :
+                              cri_if[snoop].req_tag;
+    assign snoop_phys_indexed[snoop] = cri_if[snoop].req.phys_indexed;
   end
 
-  hwpf_stride_wrapper #(
-    .HPDcacheCfg          (HPDCACHE_CFG),
-    .NUM_HW_PREFETCH      (NUM_HW_PREFETCH),
-    .NUM_SNOOP_PORTS      (NUM_CORE_REQUESTERS),
-    .hpdcache_tag_t       (hpdcache_tag_t),
-    .hpdcache_req_offset_t(hpdcache_req_offset_t),
-    .hpdcache_req_data_t  (hpdcache_req_data_t),
-    .hpdcache_req_be_t    (hpdcache_req_be_t),
-    .hpdcache_req_sid_t   (hpdcache_req_sid_t),
-    .hpdcache_req_tid_t   (hpdcache_req_tid_t),
-    .hpdcache_req_t       (hpdcache_req_t),
-    .hpdcache_rsp_t       (hpdcache_rsp_t)
-  ) prefetcher (
-    .clk_i                     (clk),
-    .rst_ni                    (rst_n),
-    .hwpf_stride_base_set_i    (hwpf_base_set),
-    .hwpf_stride_base_i        (hwpf_base_i),
-    .hwpf_stride_base_o        (hwpf_base_o),
-    .hwpf_stride_param_set_i   (hwpf_param_set),
-    .hwpf_stride_param_i       (hwpf_param_i),
-    .hwpf_stride_param_o       (hwpf_param_o),
-    .hwpf_stride_throttle_set_i(hwpf_throttle_set),
-    .hwpf_stride_throttle_i    (hwpf_throttle_i),
-    .hwpf_stride_throttle_o    (hwpf_throttle_o),
-    .hwpf_stride_status_o      (hwpf_status),
-    .snoop_valid_i             (snoop_valid),
-    .snoop_abort_i             (snoop_abort),
-    .snoop_addr_offset_i       (snoop_offset),
-    .snoop_addr_tag_i          (snoop_tag),
-    .snoop_phys_indexed_i      (snoop_phys_indexed),
-    .hpdcache_req_sid_i        (hpdcache_req_sid_t'(PREFETCH_REQUESTER)),
-    .hpdcache_req_valid_o      (prefetch_req_valid),
-    .hpdcache_req_ready_i      (prefetch_req_ready),
-    .hpdcache_req_o            (prefetch_req),
-    .hpdcache_req_abort_o      (prefetch_req_abort),
-    .hpdcache_req_tag_o        (prefetch_req_tag),
-    .hpdcache_req_pma_o        (prefetch_req_pma),
-    .hpdcache_rsp_valid_i      (prefetch_rsp_valid),
-    .hpdcache_rsp_i            (prefetch_rsp)
-  );
+  if (HAS_PREFETCHER) begin : gen_prefetcher
+    assign core_req_valid[PREFETCH_REQUESTER] = prefetch_req_valid;
+    assign prefetch_req_ready                 = core_req_ready[PREFETCH_REQUESTER];
+    assign core_req[PREFETCH_REQUESTER]       = prefetch_req;
+    assign core_req_abort[PREFETCH_REQUESTER] = prefetch_req_abort;
+    assign core_req_tag[PREFETCH_REQUESTER]   = prefetch_req_tag;
+    assign core_req_pma[PREFETCH_REQUESTER]   = prefetch_req_pma;
+    assign prefetch_rsp_valid                 = core_rsp_valid[PREFETCH_REQUESTER];
+    assign prefetch_rsp                       = core_rsp[PREFETCH_REQUESTER];
+
+    hwpf_stride_wrapper #(
+      .HPDcacheCfg          (HPDCACHE_CFG),
+      .NUM_HW_PREFETCH      (NUM_HW_PREFETCH),
+      .NUM_SNOOP_PORTS      (NUM_CORE_REQUESTERS),
+      .hpdcache_tag_t       (hpdcache_tag_t),
+      .hpdcache_req_offset_t(hpdcache_req_offset_t),
+      .hpdcache_req_data_t  (hpdcache_req_data_t),
+      .hpdcache_req_be_t    (hpdcache_req_be_t),
+      .hpdcache_req_sid_t   (hpdcache_req_sid_t),
+      .hpdcache_req_tid_t   (hpdcache_req_tid_t),
+      .hpdcache_req_t       (hpdcache_req_t),
+      .hpdcache_rsp_t       (hpdcache_rsp_t)
+    ) prefetcher (
+      .clk_i                     (clk),
+      .rst_ni                    (rst_n),
+      .hwpf_stride_base_set_i    (hwpf_base_set),
+      .hwpf_stride_base_i        (hwpf_base_i),
+      .hwpf_stride_base_o        (hwpf_base_o),
+      .hwpf_stride_param_set_i   (hwpf_param_set),
+      .hwpf_stride_param_i       (hwpf_param_i),
+      .hwpf_stride_param_o       (hwpf_param_o),
+      .hwpf_stride_throttle_set_i(hwpf_throttle_set),
+      .hwpf_stride_throttle_i    (hwpf_throttle_i),
+      .hwpf_stride_throttle_o    (hwpf_throttle_o),
+      .hwpf_stride_status_o      (hwpf_status),
+      .snoop_valid_i             (snoop_valid),
+      .snoop_abort_i             (snoop_abort),
+      .snoop_addr_offset_i       (snoop_offset),
+      .snoop_addr_tag_i          (snoop_tag),
+      .snoop_phys_indexed_i      (snoop_phys_indexed),
+      .hpdcache_req_sid_i        (hpdcache_req_sid_t'(PREFETCH_REQUESTER)),
+      .hpdcache_req_valid_o      (prefetch_req_valid),
+      .hpdcache_req_ready_i      (prefetch_req_ready),
+      .hpdcache_req_o            (prefetch_req),
+      .hpdcache_req_abort_o      (prefetch_req_abort),
+      .hpdcache_req_tag_o        (prefetch_req_tag),
+      .hpdcache_req_pma_o        (prefetch_req_pma),
+      .hpdcache_rsp_valid_i      (prefetch_rsp_valid),
+      .hpdcache_rsp_i            (prefetch_rsp)
+    );
+  end
 
   // --------------------------------------------------------------------------
   // DUT native memory channels and the thin AXI mapping used by cv_dv_utils.
@@ -184,6 +187,24 @@ module top;
   logic                   mem_rsp_write_ready;
   logic                   mem_rsp_write_valid;
   hpdcache_mem_resp_w_t   mem_rsp_write;
+
+  hpdcache_cmi_if cmi_if(.clk_i(clk), .rst_ni(rst_n));
+
+  assign cmi_if.mem_req_read_ready       = mem_req_read_ready;
+  assign cmi_if.mem_req_read_valid       = mem_req_read_valid;
+  assign cmi_if.mem_req_read             = mem_req_read;
+  assign cmi_if.mem_rsp_read_ready       = mem_rsp_read_ready;
+  assign cmi_if.mem_rsp_read_valid       = mem_rsp_read_valid;
+  assign cmi_if.mem_rsp_read             = mem_rsp_read;
+  assign cmi_if.mem_req_write_ready      = mem_req_write_ready;
+  assign cmi_if.mem_req_write_valid      = mem_req_write_valid;
+  assign cmi_if.mem_req_write            = mem_req_write;
+  assign cmi_if.mem_req_write_data_ready = mem_req_write_data_ready;
+  assign cmi_if.mem_req_write_data_valid = mem_req_write_data_valid;
+  assign cmi_if.mem_req_write_data       = mem_req_write_data;
+  assign cmi_if.mem_rsp_write_ready      = mem_rsp_write_ready;
+  assign cmi_if.mem_rsp_write_valid      = mem_rsp_write_valid;
+  assign cmi_if.mem_rsp_write            = mem_rsp_write;
 
   axi_if #(
     .wd_addr(MEM_ADDR_WIDTH),
@@ -465,11 +486,14 @@ module top;
     uvm_config_db#(virtual memory_response_if#(
       MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH
     ))::set(null, "*", "axi2mem_req_wr", mem_wr_vif);
+    uvm_config_db#(virtual hpdcache_cmi_if)::set(
+      null, "uvm_test_top.env.cmi_agent.*", "vif", cmi_if
+    );
     run_test("hpdcache_random_test");
   end
 
   initial begin
-    #50us;
+    #5ms;
     $fatal(1, "global random-test timeout");
   end
 
