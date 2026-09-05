@@ -1,3 +1,7 @@
+// CRI channel items are specialized views of one transaction item.  Keeping
+// the request and response fields in the common item preserves the existing
+// sequence/driver API while allowing the monitor to publish strongly typed
+// channel objects as well as a paired transaction object.
 class hpdcache_cri_item extends uvm_sequence_item;
   localparam int unsigned REQ_BYTES = REQ_WORDS * (WORD_WIDTH / 8);
 
@@ -18,6 +22,9 @@ class hpdcache_cri_item extends uvm_sequence_item;
   bit                error;
   bit                aborted;
   hpdcache_req_be_t  data_valid;
+
+  // data remains the request payload after transaction assembly.
+  hpdcache_req_data_t response_data;
 
   bit                  use_pma_region;
   int unsigned         pma_region_index;
@@ -140,6 +147,7 @@ class hpdcache_cri_item extends uvm_sequence_item;
     `uvm_field_int(error, UVM_DEFAULT)
     `uvm_field_int(aborted, UVM_DEFAULT)
     `uvm_field_int(data_valid, UVM_HEX)
+    `uvm_field_int(response_data, UVM_HEX)
   `uvm_object_utils_end
 
   function new(string name = "hpdcache_cri_item");
@@ -157,5 +165,24 @@ class hpdcache_cri_item extends uvm_sequence_item;
     pma_region_base         = pma_config.region_base(index);
     pma_region_last         = pma_config.region_last(index);
     pma_region_uncacheable = pma_config.region_is_uncacheable(index);
+  endfunction
+endclass
+
+// Channel-specific objects intentionally add no fields.  Their distinct
+// dynamic types let analysis subscribers state whether they consume request,
+// response, or paired transaction traffic.
+class hpdcache_cri_req_item extends hpdcache_cri_item;
+  `uvm_object_utils(hpdcache_cri_req_item)
+
+  function new(string name = "hpdcache_cri_req_item");
+    super.new(name);
+  endfunction
+endclass
+
+class hpdcache_cri_resp_item extends hpdcache_cri_item;
+  `uvm_object_utils(hpdcache_cri_resp_item)
+
+  function new(string name = "hpdcache_cri_resp_item");
+    super.new(name);
   endfunction
 endclass

@@ -67,11 +67,13 @@ class hpdcache_env extends uvm_env;
   function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
     foreach (cri_agents[i])
-      cri_agents[i].monitor.request_ap.connect(scoreboard.request_export);
+      cri_agents[i].monitor.req_ap.connect(scoreboard.cri_req_export);
     foreach (cri_agents[i])
-      cri_agents[i].monitor.response_ap.connect(scoreboard.response_export);
-    cmi_agent.monitor.request_ap.connect(scoreboard.cmi_request_export);
-    cmi_agent.monitor.response_ap.connect(scoreboard.cmi_response_export);
+      cri_agents[i].monitor.resp_ap.connect(scoreboard.cri_resp_export);
+    foreach (cri_agents[i])
+      cri_agents[i].monitor.cri_ap.connect(scoreboard.cri_export);
+    cmi_agent.monitor.read_ap.connect(scoreboard.cmi_read_export);
+    cmi_agent.monitor.write_ap.connect(scoreboard.cmi_write_export);
     mem_rsp_model.m_rsp_cfg = mem_cfg;
     mem_rsp_model.ap_mem_rd_rsp.connect(
       scoreboard.memory_read_response_export

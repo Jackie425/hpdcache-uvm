@@ -1,13 +1,14 @@
 class hpdcache_scoreboard extends uvm_scoreboard;
   `uvm_component_utils(hpdcache_scoreboard)
 
-  typedef memory_txn#(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH) mem_item_t;
-
-  uvm_analysis_export #(hpdcache_cri_item) request_export;
-  uvm_analysis_export #(hpdcache_cri_item) response_export;
-  uvm_analysis_export #(mem_item_t) memory_read_response_export;
-  uvm_analysis_export #(mem_item_t) cmi_request_export;
-  uvm_analysis_export #(mem_item_t) cmi_response_export;
+  uvm_analysis_export #(hpdcache_cri_req_item) cri_req_export;
+  uvm_analysis_export #(hpdcache_cri_resp_item) cri_resp_export;
+  uvm_analysis_export #(hpdcache_cri_item) cri_export;
+  uvm_analysis_export #(hpdcache_cmi_read_item) cmi_read_export;
+  uvm_analysis_export #(hpdcache_cmi_write_item) cmi_write_export;
+  uvm_analysis_export #(memory_txn#(
+    MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH
+  )) memory_read_response_export;
 
   hpdcache_pma_config pma_cfg;
   hpdcache_predictor predictor;
@@ -16,11 +17,12 @@ class hpdcache_scoreboard extends uvm_scoreboard;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
-    request_export = new("request_export", this);
-    response_export = new("response_export", this);
+    cri_req_export = new("cri_req_export", this);
+    cri_resp_export = new("cri_resp_export", this);
+    cri_export = new("cri_export", this);
+    cmi_read_export = new("cmi_read_export", this);
+    cmi_write_export = new("cmi_write_export", this);
     memory_read_response_export = new("memory_read_response_export", this);
-    cmi_request_export = new("cmi_request_export", this);
-    cmi_response_export = new("cmi_response_export", this);
   endfunction
 
   virtual function void build_phase(uvm_phase phase);
@@ -50,14 +52,13 @@ class hpdcache_scoreboard extends uvm_scoreboard;
 
   virtual function void connect_phase(uvm_phase phase);
     super.connect_phase(phase);
-    request_export.connect(predictor.request_imp);
-    request_export.connect(uncacheable_evaluator.cri_request_imp);
+    cri_req_export.connect(predictor.request_imp);
+    cri_export.connect(uncacheable_evaluator.cri_item_imp);
     memory_read_response_export.connect(predictor.memory_response_imp);
     predictor.expected_port.connect(cacheable_evaluator.expected_imp);
-    response_export.connect(cacheable_evaluator.actual_imp);
-    response_export.connect(uncacheable_evaluator.cri_response_imp);
-    cmi_request_export.connect(uncacheable_evaluator.cmi_request_imp);
-    cmi_response_export.connect(uncacheable_evaluator.cmi_response_imp);
+    cri_resp_export.connect(cacheable_evaluator.actual_imp);
+    cmi_read_export.connect(uncacheable_evaluator.cmi_read_item_imp);
+    cmi_write_export.connect(uncacheable_evaluator.cmi_write_item_imp);
   endfunction
 
   function automatic bit is_idle();

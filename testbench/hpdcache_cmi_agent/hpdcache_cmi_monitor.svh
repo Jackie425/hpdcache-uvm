@@ -1,24 +1,28 @@
 class hpdcache_cmi_monitor extends uvm_monitor;
   `uvm_component_utils(hpdcache_cmi_monitor)
 
-  typedef memory_txn#(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH) mem_item_t;
-
   virtual hpdcache_cmi_if vif;
-  uvm_analysis_port #(mem_item_t) request_ap;
-  uvm_analysis_port #(mem_item_t) response_ap;
+
+  uvm_analysis_port #(hpdcache_cmi_read_item) read_ap;
+  uvm_analysis_port #(hpdcache_cmi_write_item) write_ap;
 
   protected hpdcache_mem_req_t write_address_q[$];
   protected hpdcache_mem_req_w_t write_data_q[$];
+  protected hpdcache_cmi_read_item pending_read_requests[
+    bit [MEM_ID_WIDTH-1:0]
+  ][$];
+  protected hpdcache_cmi_write_item pending_write_requests[
+    bit [MEM_ID_WIDTH-1:0]
+  ][$];
   protected int unsigned observed_requests;
   protected int unsigned observed_responses;
   protected int unsigned assembled_writes;
-  protected int unsigned pending_read_beats;
   protected int unsigned pending_write_responses;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
-    request_ap = new("request_ap", this);
-    response_ap = new("response_ap", this);
+    read_ap = new("read_ap", this);
+    write_ap = new("write_ap", this);
   endfunction
 
   function void build_phase(uvm_phase phase);
@@ -80,39 +84,63 @@ class hpdcache_cmi_monitor extends uvm_monitor;
     endcase
   endfunction
 
-  protected function mem_item_t make_request(
-    hpdcache_mem_req_t request,
-    hpdcache_mem_req_w_t write_data,
-    bit is_write
+  protected function void initialize_request(
+    hpdcache_cmi_item item,
+    hpdcache_mem_req_t request
   );
-    mem_item_t item;
-
-    item = hpdcache_cmi_item::type_id::create("observed_cmi_request");
     item.id = request.mem_req_id;
     item.addr = request.mem_req_addr;
-    item.data = is_write ? write_data.mem_req_w_data : '0;
-    item.strb = is_write ? write_data.mem_req_w_be : transfer_mask(request);
-    item.err = 1'b0;
     item.cmd = convert_command(request.mem_req_command);
     item.atop = mem_atomic_t'(request.mem_req_atomic);
+    item.request_valid = 1'b1;
+    item.request_cacheable = request.mem_req_cacheable;
+  endfunction
+
+  protected function hpdcache_cmi_read_item make_read_request(
+    hpdcache_mem_req_t request
+  );
+    hpdcache_cmi_read_item item;
+
+    item = hpdcache_cmi_read_item::type_id::create("observed_cmi_read");
+    initialize_request(item, request);
+    item.request_data = '0;
+    item.request_strb = transfer_mask(request);
+    return item;
+  endfunction
+
+  protected function hpdcache_cmi_write_item make_write_request(
+    hpdcache_mem_req_t request,
+    hpdcache_mem_req_w_t write_data
+  );
+    hpdcache_cmi_write_item item;
+
+    item = hpdcache_cmi_write_item::type_id::create("observed_cmi_write");
+    initialize_request(item, request);
+    item.request_data = write_data.mem_req_w_data;
+    item.request_strb = write_data.mem_req_w_be;
     return item;
   endfunction
 
   protected function void sample_read_request(hpdcache_mem_req_t request);
-    mem_item_t item;
+    hpdcache_cmi_read_item item;
 
-    pending_read_beats += int'(request.mem_req_len) + 1;
     if (request.mem_req_cacheable)
       return;
-    item = make_request(request, '0, 1'b0);
+    if (request.mem_req_len != 0) begin
+      `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
+        "uncacheable read must be single-beat addr=0x%0h len=%0d",
+        request.mem_req_addr, request.mem_req_len))
+      return;
+    end
+    item = make_read_request(request);
+    pending_read_requests[item.id].push_back(item);
     observed_requests++;
-    request_ap.write(item);
   endfunction
 
   protected function void complete_write_requests();
     hpdcache_mem_req_t request;
     hpdcache_mem_req_w_t write_data;
-    mem_item_t item;
+    hpdcache_cmi_write_item item;
     int unsigned beats;
 
     while (write_address_q.size() != 0 && write_data_q.size() != 0) begin
@@ -131,68 +159,92 @@ class hpdcache_cmi_monitor extends uvm_monitor;
             write_data.mem_req_w_last))
       end
       assembled_writes++;
-      if (request.mem_req_cacheable)
-        continue;
-      if (beats != 1) begin
+      if (!request.mem_req_cacheable && beats != 1) begin
         `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
           "uncacheable write must be single-beat addr=0x%0h len=%0d",
           request.mem_req_addr, request.mem_req_len))
         continue;
       end
-      item = make_request(request, write_data, 1'b1);
+      if (request.mem_req_cacheable)
+        continue;
+
+      item = make_write_request(request, write_data);
+      pending_write_requests[item.id].push_back(item);
       observed_requests++;
-      request_ap.write(item);
     end
   endfunction
 
   protected function void sample_read_response(hpdcache_mem_resp_r_t response);
-    mem_item_t item;
+    hpdcache_cmi_read_item item;
+    bit [MEM_ID_WIDTH-1:0] response_id;
 
-    if (pending_read_beats == 0) begin
-      `uvm_error("HPDCACHE_CHK_CMI", "read response has no pending read request")
-    end else begin
-      pending_read_beats--;
-    end
-    if (response.mem_resp_r_id !== {MEM_ID_WIDTH{1'b1}})
+    response_id = response.mem_resp_r_id;
+
+    if (!pending_read_requests.exists(response_id) ||
+        pending_read_requests[response_id].size() == 0) begin
+      if (response_id === {MEM_ID_WIDTH{1'b1}})
+        `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
+          "uncacheable read response ID=0x%0h has no pending request",
+          response_id))
       return;
-    item = hpdcache_cmi_item::type_id::create("observed_cmi_read_response");
-    item.id = response.mem_resp_r_id;
-    item.data = response.mem_resp_r_data;
+    end
+
+    if (response.mem_resp_r_last !== 1'b1)
+      `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
+        "uncacheable read response must assert LAST ID=0x%0h last=%0b",
+        response_id, response.mem_resp_r_last))
+    item = pending_read_requests[response_id].pop_front();
+    if (pending_read_requests[response_id].size() == 0)
+      pending_read_requests.delete(response_id);
+    item.response_data = response.mem_resp_r_data;
     item.err = response.mem_resp_r_error != HPDCACHE_MEM_RESP_OK;
-    item.cmd = MEM_READ;
+    item.response_valid = 1'b1;
     observed_responses++;
-    response_ap.write(item);
+    read_ap.write(item);
   endfunction
 
   protected function void sample_write_response(hpdcache_mem_resp_w_t response);
-    mem_item_t item;
+    hpdcache_cmi_write_item item;
+    bit [MEM_ID_WIDTH-1:0] response_id;
 
-    if (pending_write_responses == 0) begin
+    response_id = response.mem_resp_w_id;
+
+    if (pending_write_responses == 0)
       `uvm_error("HPDCACHE_CHK_CMI", "write response has no pending write request")
-    end else begin
+    else
       pending_write_responses--;
-    end
-    if (response.mem_resp_w_id !== {MEM_ID_WIDTH{1'b1}})
+
+    if (!pending_write_requests.exists(response_id) ||
+        pending_write_requests[response_id].size() == 0) begin
+      if (response_id === {MEM_ID_WIDTH{1'b1}})
+        `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
+          "uncacheable write response ID=0x%0h has no pending request",
+          response_id))
       return;
-    item = hpdcache_cmi_item::type_id::create("observed_cmi_write_response");
-    item.id = response.mem_resp_w_id;
+    end
+
+    item = pending_write_requests[response_id].pop_front();
+    if (pending_write_requests[response_id].size() == 0)
+      pending_write_requests.delete(response_id);
+    item.response_valid = 1'b1;
     item.err = response.mem_resp_w_error != HPDCACHE_MEM_RESP_OK;
-    item.cmd = MEM_WRITE;
     observed_responses++;
-    response_ap.write(item);
+    write_ap.write(item);
   endfunction
 
   function void reset_state();
     write_address_q.delete();
     write_data_q.delete();
-    pending_read_beats = 0;
+    pending_read_requests.delete();
+    pending_write_requests.delete();
     pending_write_responses = 0;
   endfunction
 
   function automatic bit is_idle();
     return write_address_q.size() == 0 &&
            write_data_q.size() == 0 &&
-           pending_read_beats == 0 &&
+           pending_read_requests.num() == 0 &&
+           pending_write_requests.num() == 0 &&
            pending_write_responses == 0;
   endfunction
 
@@ -200,8 +252,9 @@ class hpdcache_cmi_monitor extends uvm_monitor;
     super.check_phase(phase);
     if (!is_idle())
       `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
-        "CMI monitor ended with pending write_addr=%0d write_data=%0d read_beats=%0d write_responses=%0d",
-        write_address_q.size(), write_data_q.size(), pending_read_beats,
+        "CMI monitor ended with pending write_addr=%0d write_data=%0d read_requests=%0d write_requests=%0d write_responses=%0d",
+        write_address_q.size(), write_data_q.size(),
+        pending_read_requests.num(), pending_write_requests.num(),
         pending_write_responses))
   endfunction
 
@@ -211,8 +264,8 @@ class hpdcache_cmi_monitor extends uvm_monitor;
       "requests=%0d responses=%0d",
       observed_requests, observed_responses), UVM_NONE)
     `uvm_info("HPDCACHE_RPT_CHECK_CMI", $sformatf(
-      "writes_assembled=%0d pending_write_addr=%0d pending_write_data=%0d pending_read_beats=%0d pending_write_responses=%0d",
+      "writes_assembled=%0d pending_write_addr=%0d pending_write_data=%0d pending_read_beats=0 pending_read_requests=%0d pending_write_responses=%0d",
       assembled_writes, write_address_q.size(), write_data_q.size(),
-      pending_read_beats, pending_write_responses), UVM_NONE)
+      pending_read_requests.num(), pending_write_responses), UVM_NONE)
   endfunction
 endclass

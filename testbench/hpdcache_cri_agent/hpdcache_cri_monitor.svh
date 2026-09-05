@@ -3,10 +3,18 @@ class hpdcache_cri_monitor extends uvm_monitor;
 
   virtual hpdcache_cri_if vif;
   hpdcache_cri_agent_config cfg;
-  uvm_analysis_port #(hpdcache_cri_item) request_ap;
-  uvm_analysis_port #(hpdcache_cri_item) response_ap;
 
-  protected hpdcache_cri_item pending_requests[$];
+  // Typed channel ports used by the hierarchical CRI transaction model.
+  uvm_analysis_port #(hpdcache_cri_req_item)  req_ap;
+  uvm_analysis_port #(hpdcache_cri_resp_item) resp_ap;
+  uvm_analysis_port #(hpdcache_cri_item)      cri_ap;
+
+  localparam int unsigned SID_W = $bits(hpdcache_req_sid_t);
+  localparam int unsigned TID_W = $bits(hpdcache_req_tid_t);
+  typedef bit [SID_W+TID_W-1:0] transaction_key_t;
+
+  protected hpdcache_cri_req_item pending_requests[$];
+  protected hpdcache_cri_item pending_transactions[transaction_key_t];
   protected int unsigned observed_requests;
   protected int unsigned observed_vipt_requests;
   protected int unsigned observed_aborts;
@@ -14,8 +22,9 @@ class hpdcache_cri_monitor extends uvm_monitor;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
-    request_ap = new("request_ap", this);
-    response_ap = new("response_ap", this);
+    req_ap  = new("req_ap", this);
+    resp_ap = new("resp_ap", this);
+    cri_ap  = new("cri_ap", this);
   endfunction
 
   function void build_phase(uvm_phase phase);
@@ -32,7 +41,7 @@ class hpdcache_cri_monitor extends uvm_monitor;
     forever begin
       @(vif.mon_cb);
       if (!vif.mon_cb.rst_ni) begin
-        pending_requests.delete();
+        reset_state();
         continue;
       end
 
@@ -45,14 +54,14 @@ class hpdcache_cri_monitor extends uvm_monitor;
   endtask
 
   protected function void sample_request();
-    hpdcache_cri_item item;
+    hpdcache_cri_req_item item;
 
     if (vif.mon_cb.req.sid !== hpdcache_req_sid_t'(cfg.requester_id))
       `uvm_error("HPDCACHE_CHK_CRI", $sformatf(
         "request on requester port %0d has SID %0d",
         cfg.requester_id, vif.mon_cb.req.sid))
 
-    item = hpdcache_cri_item::type_id::create("observed_request");
+    item = hpdcache_cri_req_item::type_id::create("observed_request");
     item.is_response  = 1'b0;
     item.op           = vif.mon_cb.req.op;
     item.data         = vif.mon_cb.req.wdata;
@@ -76,7 +85,7 @@ class hpdcache_cri_monitor extends uvm_monitor;
   endfunction
 
   protected function void complete_request();
-    hpdcache_cri_item item;
+    hpdcache_cri_req_item item;
 
     if (pending_requests.size() == 0)
       return;
@@ -89,42 +98,99 @@ class hpdcache_cri_monitor extends uvm_monitor;
     publish_request(item);
   endfunction
 
-  protected function void publish_request(hpdcache_cri_item item);
+  protected function hpdcache_cri_item request_transaction(
+    hpdcache_cri_req_item request
+  );
+    hpdcache_cri_item item;
+
+    item = hpdcache_cri_item::type_id::create("cri_request_transaction");
+    item.copy(request);
+    item.is_response = 1'b0;
+    item.error = 1'b0;
+    item.aborted = 1'b0;
+    item.response_data = '0;
+    return item;
+  endfunction
+
+  protected function void publish_request(hpdcache_cri_req_item item);
+    hpdcache_cri_item transaction;
+    transaction_key_t transaction_key;
+
     observed_requests++;
     if (item.abort)
       observed_aborts++;
-    request_ap.write(item);
+
+    transaction = request_transaction(item);
+    req_ap.write(item);
+    if (!item.need_rsp) begin
+      cri_ap.write(transaction);
+      return;
+    end
+
+    transaction_key = {item.sid, item.tid};
+    if (pending_transactions.exists(transaction_key)) begin
+      `uvm_error("HPDCACHE_CHK_CRI", $sformatf(
+        "duplicate pending request SID %0d TID %0d",
+        item.sid, item.tid))
+      return;
+    end
+    pending_transactions[transaction_key] = transaction;
   endfunction
 
   protected function void sample_response();
-    hpdcache_cri_item item;
+    hpdcache_cri_resp_item item;
+    hpdcache_cri_item transaction;
+    transaction_key_t transaction_key;
 
     if (vif.mon_cb.rsp.sid !== hpdcache_req_sid_t'(cfg.requester_id))
       `uvm_error("HPDCACHE_CHK_CRI", $sformatf(
         "response on requester port %0d has SID %0d",
         cfg.requester_id, vif.mon_cb.rsp.sid))
 
-    item = hpdcache_cri_item::type_id::create("observed_response");
-    item.is_response = 1'b1;
-    item.data        = vif.mon_cb.rsp.rdata;
-    item.sid         = vif.mon_cb.rsp.sid;
-    item.tid         = vif.mon_cb.rsp.tid;
-    item.error       = vif.mon_cb.rsp.error;
-    item.aborted     = vif.mon_cb.rsp.aborted;
+    item = hpdcache_cri_resp_item::type_id::create("observed_response");
+    item.is_response  = 1'b1;
+    item.data         = vif.mon_cb.rsp.rdata;
+    item.response_data = vif.mon_cb.rsp.rdata;
+    item.sid          = vif.mon_cb.rsp.sid;
+    item.tid          = vif.mon_cb.rsp.tid;
+    item.error        = vif.mon_cb.rsp.error;
+    item.aborted      = vif.mon_cb.rsp.aborted;
     observed_responses++;
-    response_ap.write(item);
+
+    resp_ap.write(item);
+
+    transaction_key = {item.sid, item.tid};
+    if (!pending_transactions.exists(transaction_key)) begin
+      `uvm_error("HPDCACHE_CHK_CRI", $sformatf(
+        "response SID %0d TID %0d has no pending request",
+        item.sid, item.tid))
+      return;
+    end
+
+    transaction = pending_transactions[transaction_key];
+    transaction.is_response = 1'b1;
+    transaction.error = item.error;
+    transaction.aborted = item.aborted;
+    transaction.response_data = item.data;
+    cri_ap.write(transaction);
+    pending_transactions.delete(transaction_key);
   endfunction
 
   function automatic bit is_idle();
-    return pending_requests.size() == 0;
+    return pending_requests.size() == 0 && pending_transactions.num() == 0;
+  endfunction
+
+  function void reset_state();
+    pending_requests.delete();
+    pending_transactions.delete();
   endfunction
 
   virtual function void check_phase(uvm_phase phase);
     super.check_phase(phase);
-    if (pending_requests.size() != 0)
+    if (pending_requests.size() != 0 || pending_transactions.num() != 0)
       `uvm_error("HPDCACHE_CHK_CRI", $sformatf(
-        "%0d requests are pending their publish cycle",
-        pending_requests.size()))
+        "CRI monitor ended with pending requests=%0d transactions=%0d",
+        pending_requests.size(), pending_transactions.num()))
   endfunction
 
   virtual function void report_phase(uvm_phase phase);

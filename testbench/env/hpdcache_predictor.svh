@@ -2,7 +2,7 @@
 `uvm_analysis_imp_decl(_request)
 class hpdcache_predictor extends uvm_component;
   `uvm_component_utils(hpdcache_predictor)
-  uvm_analysis_imp_request #(hpdcache_cri_item, hpdcache_predictor) request_imp;
+  uvm_analysis_imp_request #(hpdcache_cri_req_item, hpdcache_predictor) request_imp;
   uvm_analysis_port #(hpdcache_cri_item) expected_port;
   uvm_analysis_imp_memory_response #(
     memory_txn#(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH), hpdcache_predictor
@@ -45,16 +45,16 @@ class hpdcache_predictor extends uvm_component;
     );
   endfunction
 
-  virtual function void write_request(hpdcache_cri_item t);
+  virtual function void write_request(hpdcache_cri_req_item t);
     received_requests++;
     predict(t);
   endfunction
 
-  function automatic key_t key(hpdcache_cri_item t);
+  function automatic key_t key(hpdcache_cri_req_item t);
     return {t.sid, t.tid};
   endfunction
 
-  function void predict(hpdcache_cri_item t);
+  function void predict(hpdcache_cri_req_item t);
     key_t transaction_key;
     hpdcache_cri_item exp;
     pending_expected_t pending_expected;

@@ -4,7 +4,7 @@ class hpdcache_cacheable_evaluator extends uvm_component;
   `uvm_component_utils(hpdcache_cacheable_evaluator)
 
   uvm_analysis_imp_cacheable_actual #(
-    hpdcache_cri_item, hpdcache_cacheable_evaluator
+    hpdcache_cri_resp_item, hpdcache_cacheable_evaluator
   ) actual_imp;
   uvm_analysis_imp_cacheable_expected #(
     hpdcache_cri_item, hpdcache_cacheable_evaluator
@@ -15,7 +15,7 @@ class hpdcache_cacheable_evaluator extends uvm_component;
   typedef bit [SID_W+TID_W-1:0] key_t;
 
   hpdcache_pma_config pma_cfg;
-  hpdcache_cri_item actual_by_key[key_t][$];
+  hpdcache_cri_resp_item actual_by_key[key_t][$];
   hpdcache_cri_item expected_by_key[key_t][$];
   int unsigned received_actual;
   int unsigned received_expected;
@@ -49,9 +49,9 @@ class hpdcache_cacheable_evaluator extends uvm_component;
     expected_by_key.delete();
   endtask
 
-  function void write_cacheable_actual(hpdcache_cri_item t);
+  function void write_cacheable_actual(hpdcache_cri_resp_item t);
     key_t transaction_key;
-    hpdcache_cri_item snapshot;
+    hpdcache_cri_resp_item snapshot;
 
     if (!$cast(snapshot, t.clone()))
       `uvm_fatal(get_type_name(), "failed to clone actual response")

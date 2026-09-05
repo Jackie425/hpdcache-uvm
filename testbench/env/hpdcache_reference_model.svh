@@ -50,7 +50,7 @@ class hpdcache_reference_model extends uvm_object;
 
   // Only state-changing requests are applied here. Prediction and expected
   // transaction construction belong to hpdcache_predictor.
-  function void apply_request(hpdcache_cri_item req);
+  function void apply_request(hpdcache_cri_req_item req);
     longint unsigned byte_addr;
     longint unsigned word_key;
     int unsigned mem_byte;
