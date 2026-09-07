@@ -74,7 +74,12 @@ class hpdcache_env extends uvm_env;
       cri_agents[i].monitor.cri_ap.connect(scoreboard.cri_export);
     cmi_agent.monitor.read_ap.connect(scoreboard.cmi_read_export);
     cmi_agent.monitor.write_ap.connect(scoreboard.cmi_write_export);
+    cmi_agent.monitor.atomic_ap.connect(scoreboard.cmi_atomic_export);
     mem_rsp_model.m_rsp_cfg = mem_cfg;
+    // The checked-in memory response model exposes the back-pressure policy
+    // on the interface.  Configure that interface directly so the vendor
+    // model remains untouched.
+    mem_rsp_model.m_mem_rsp_vif.req_ready_bp_cfg = mem_cfg.m_bp;
     mem_rsp_model.ap_mem_rd_rsp.connect(
       scoreboard.memory_read_response_export
     );

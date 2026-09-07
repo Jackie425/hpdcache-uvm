@@ -56,7 +56,7 @@ ${CORE_V_VERIF}/lib/cv_dv_utils/uvm/memory_rsp_model/axi2mem/axi_intf.sv
 +incdir+testbench/hpdcache_cmi_agent/items
 +incdir+testbench/env
 +incdir+testbench/tests
-+incdir+testbench/tests/basic_test
++incdir+testbench/tests/basic_tests
 testbench/types/hpdcache_cva6_types_pkg.sv
 testbench/hpdcache_cri_agent/hpdcache_cri_if.sv
 testbench/hpdcache_cmi_agent/hpdcache_cmi_if.sv

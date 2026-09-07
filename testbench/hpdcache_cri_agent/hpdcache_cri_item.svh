@@ -22,12 +22,13 @@ class hpdcache_cri_item extends uvm_sequence_item;
   bit                error;
   bit                aborted;
   hpdcache_req_be_t  data_valid;
+  bit                sc_expect_cmi_valid;
+  bit                sc_expect_cmi;
 
   // data remains the request payload after transaction assembly.
   hpdcache_req_data_t response_data;
 
   bit                  use_pma_region;
-  int unsigned         pma_region_index;
   hpdcache_req_addr_t  pma_region_base;
   hpdcache_req_addr_t  pma_region_last;
   bit                  pma_region_uncacheable;
@@ -58,12 +59,31 @@ class hpdcache_cri_item extends uvm_sequence_item;
     };
   }
 
-  // The default regression exercises the ordinary CRI path.  Directed
-  // sequences can override this soft constraint without using another item.
+  // Keep ordinary traffic dominant while exercising every AMO and CMO in the
+  // default random regression.
   constraint default_operation_c {
     soft op dist {
-      HPDCACHE_REQ_LOAD  := 50,
-      HPDCACHE_REQ_STORE := 50
+      HPDCACHE_REQ_LOAD                  := 45,
+      HPDCACHE_REQ_STORE                 := 30,
+      HPDCACHE_REQ_AMO_LR                := 1,
+      HPDCACHE_REQ_AMO_SC                := 1,
+      HPDCACHE_REQ_AMO_SWAP              := 1,
+      HPDCACHE_REQ_AMO_ADD               := 1,
+      HPDCACHE_REQ_AMO_AND               := 1,
+      HPDCACHE_REQ_AMO_OR                := 1,
+      HPDCACHE_REQ_AMO_XOR               := 1,
+      HPDCACHE_REQ_AMO_MAX               := 1,
+      HPDCACHE_REQ_AMO_MAXU              := 1,
+      HPDCACHE_REQ_AMO_MIN               := 1,
+      HPDCACHE_REQ_AMO_MINU              := 1,
+      HPDCACHE_REQ_CMO_FENCE             := 1,
+      HPDCACHE_REQ_CMO_PREFETCH          := 1,
+      HPDCACHE_REQ_CMO_INVAL_NLINE       := 1,
+      HPDCACHE_REQ_CMO_INVAL_ALL         := 1,
+      HPDCACHE_REQ_CMO_FLUSH_NLINE       := 1,
+      HPDCACHE_REQ_CMO_FLUSH_ALL         := 1,
+      HPDCACHE_REQ_CMO_FLUSH_INVAL_NLINE := 1,
+      HPDCACHE_REQ_CMO_FLUSH_INVAL_ALL   := 1
     };
   }
 
@@ -147,6 +167,8 @@ class hpdcache_cri_item extends uvm_sequence_item;
     `uvm_field_int(error, UVM_DEFAULT)
     `uvm_field_int(aborted, UVM_DEFAULT)
     `uvm_field_int(data_valid, UVM_HEX)
+    `uvm_field_int(sc_expect_cmi_valid, UVM_DEFAULT)
+    `uvm_field_int(sc_expect_cmi, UVM_DEFAULT)
     `uvm_field_int(response_data, UVM_HEX)
   `uvm_object_utils_end
 
@@ -154,18 +176,6 @@ class hpdcache_cri_item extends uvm_sequence_item;
     super.new(name);
   endfunction
 
-  function void select_pma_region(
-    hpdcache_pma_config pma_config,
-    int unsigned index
-  );
-    if (pma_config == null || index >= pma_config.num_regions())
-      `uvm_fatal(get_type_name(), "invalid PMA region selection")
-    use_pma_region          = 1'b1;
-    pma_region_index        = index;
-    pma_region_base         = pma_config.region_base(index);
-    pma_region_last         = pma_config.region_last(index);
-    pma_region_uncacheable = pma_config.region_is_uncacheable(index);
-  endfunction
 endclass
 
 // Channel-specific objects intentionally add no fields.  Their distinct

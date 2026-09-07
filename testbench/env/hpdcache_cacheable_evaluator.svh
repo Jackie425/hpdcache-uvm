@@ -93,20 +93,23 @@ class hpdcache_cacheable_evaluator extends uvm_component;
       checked_responses++;
       if (actual.error !== expected.error)
         `uvm_error("HPDCACHE_CHK_CACHEABLE", $sformatf(
-          "response error mismatch sid=%0d tid=%0d expected=%0b actual=%0b",
-          actual.sid, actual.tid, expected.error, actual.error))
+          "response error mismatch sid=%0d tid=%0d op=%s addr=0x%0h expected=%0b actual=%0b",
+          actual.sid, actual.tid, expected.op.name(), expected.addr,
+          expected.error, actual.error))
       if (actual.aborted !== expected.aborted)
         `uvm_error("HPDCACHE_CHK_CACHEABLE", $sformatf(
-          "response abort mismatch sid=%0d tid=%0d expected=%0b actual=%0b",
-          actual.sid, actual.tid, expected.aborted, actual.aborted))
+          "response abort mismatch sid=%0d tid=%0d op=%s addr=0x%0h expected=%0b actual=%0b",
+          actual.sid, actual.tid, expected.op.name(), expected.addr,
+          expected.aborted, actual.aborted))
       if (!actual.error && !actual.aborted &&
-          expected.op == HPDCACHE_REQ_LOAD) begin
+          (expected.op == HPDCACHE_REQ_LOAD || is_amo(expected.op))) begin
         for (int i = 0; i < $bits(expected.data_valid[0]); i++) begin
           if (expected.data_valid[0][i] &&
               actual.data[0][i*8 +: 8] !== expected.data[0][i*8 +: 8])
             `uvm_error("HPDCACHE_CHK_CACHEABLE", $sformatf(
-              "load mismatch addr=0x%0h byte=%0d expected=0x%02h actual=0x%02h",
-              expected.addr, i, expected.data[0][i*8 +: 8],
+              "%s data mismatch addr=0x%0h byte=%0d expected=0x%02h actual=0x%02h",
+              expected.op.name(), expected.addr, i,
+              expected.data[0][i*8 +: 8],
               actual.data[0][i*8 +: 8]))
         end
       end

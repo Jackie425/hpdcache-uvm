@@ -3,7 +3,7 @@ class hpdcache_base_test extends uvm_test;
 
   hpdcache_env env;
   hpdcache_env_config env_cfg;
-  time drain_timeout = 1ms;
+  time drain_timeout = 10ms;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -43,16 +43,19 @@ class hpdcache_base_test extends uvm_test;
     env_cfg.mem_cfg = memory_rsp_cfg::type_id::create("mem_cfg");
     env_cfg.mem_cfg.m_enable = 1'b1;
     env_cfg.mem_cfg.rsp_order = IN_ORDER_RSP;
-    env_cfg.mem_cfg.rsp_mode = ZERO_DELAY_RSP;
+    env_cfg.mem_cfg.rsp_mode = NORMAL_RSP;
     env_cfg.mem_cfg.inter_data_cycle_fixed_delay = 0;
+    // Keep data/error injection disabled; bounded write-side exclusive-fail
+    // injection is intentional so forwarded STEX responses are checked.
     env_cfg.mem_cfg.insert_wr_error = 1'b0;
     env_cfg.mem_cfg.insert_rd_error = 1'b0;
     env_cfg.mem_cfg.insert_amo_wr_error = 1'b0;
     env_cfg.mem_cfg.insert_amo_rd_error = 1'b0;
-    env_cfg.mem_cfg.insert_wr_exclusive_fail = 1'b0;
+    env_cfg.mem_cfg.insert_wr_exclusive_fail = 1'b1;
+    env_cfg.mem_cfg.num_wr_exclusive_fails = 16;
     env_cfg.mem_cfg.insert_rd_exclusive_fail = 1'b0;
     env_cfg.mem_cfg.unsolicited_rsp = 1'b0;
-    env_cfg.mem_cfg.m_bp = NEVER;
+    env_cfg.mem_cfg.m_bp = LIGHT;
   endfunction
 
   protected function void init_vseq(hpdcache_base_vseq vseq);

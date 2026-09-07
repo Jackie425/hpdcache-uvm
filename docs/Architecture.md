@@ -1,6 +1,6 @@
 # HPDcache UVM 验证架构
 
-> 文档基线：2026-09-03，以当前仓库源码为准。
+> 文档基线：2026-09-07，以当前仓库源码为准。
 
 ## 1. 范围
 
@@ -14,8 +14,8 @@ memory 侧 CMI 观察 DUT。已经支持：
 - cacheable response 预测和 uncacheable CRI/CMI forwarding 对比；
 - 4 个 active requester 上的并发随机激励。
 
-`pma.io` 暂时固定为 0。默认 random sequence 使用 item 的 soft LOAD/STORE
-分布，AMO/CMO 由 directed sequence 覆盖同一个 item 类即可。
+`pma.io` 暂时固定为 0。默认 random sequence 使用 item 的 soft 分布，同时覆盖
+LOAD、STORE、全部 AMO 和 CMO 操作。
 
 ## 2. 固定配置
 
@@ -81,7 +81,7 @@ uvm_test_top (hpdcache_random_test)
         |-- predictor
         |   `-- reference_model
         |-- cacheable_evaluator
-        `-- uncacheable_evaluator
+        `-- uc_amo_forwarding_evaluator
 ```
 
 顶层保留真实 stride-prefetch wrapper。它 snoop 四个 core requester，但 CSR
@@ -101,11 +101,12 @@ sequence 分配，response 还携带 `error`、`aborted` 和期望数据的 `dat
   `addr/size` 对应的 byte lane，零 BE 也是合法状态；
 - AMO size 为 4 或 8 byte、自然对齐、BE 覆盖整个 operand，并强制 response；
 - CMO 中被协议实际使用的字段受约束，fence/invalidate/flush 的 don't-care 字段
-  不被固定为某一个值；
+  不被固定为某一个值；prefetch 同时覆盖 cacheable/uncacheable PMA 和有/无 response，
+  RTL 对 prefetch 忽略 PMA uncacheable；
 - abort 只允许出现在 VIPT 请求，IO 固定关闭，write-policy hint 只取
   AUTO/WB/WT。
 
-LOAD/STORE 是 soft 默认分布，因此 directed sequence 可以直接通过 inline
+operation 权重是 soft 默认分布，因此 directed sequence 可以直接通过 inline
 constraint 选择 AMO/CMO，不需要派生第二种 item。
 
 sequence 在 randomize 前选择 PMA region。item 随后用该 region 约束地址和
@@ -125,11 +126,12 @@ response 到达后 clone 原 request，补上 response data/error/aborted，并�
 sequence ID 路由回发起 sequence。`need_rsp=0` 在请求完整进入 DUT 后由 driver
 产生本地 completion，仅用于让 sequence 释放 TID，不会伪造 monitor transaction。
 
-monitor 在 CRI 握手拍保存所有 request，统一在下一拍通过 `request_ap` 发布。PIPT
+monitor 在 CRI 握手拍保存所有 request，统一在下一拍通过 `req_ap` 发布。PIPT
 request 保留握手拍采集的完整地址/PMA；VIPT request 在发布前合并下一拍的
-tag/PMA/abort。response 从独立的 `response_ap` 发布，只包含 CRI response channel
-实际提供的 rdata、SID、TID、error 和 aborted。monitor 不保存 request/response
-配对 context，也不负责二者关联。
+tag/PMA/abort。response 从独立的 `resp_ap` 发布，只包含 CRI response channel
+实际提供的 rdata、SID、TID、error 和 aborted。对于 `need_rsp=1`，monitor 以
+`{SID,TID}` 保存 request context，response 到达后组装完整 transaction 并通过
+`cri_ap` 发布；`need_rsp=0` 的 transaction 在 request 发布时直接送入 `cri_ap`。
 
 ## 7. TID 所有权
 
@@ -139,8 +141,16 @@ allocation bitmap，不再存在单独的 TID manager class。sequence 分成三
 - `hpdcache_base_seq`：只服务恰好一笔 item 的 API sequence；
 - `sequences/api/`：保存最小 API，单笔 API 直接继承 base，多笔 API 组合并启动
   多个单笔 API；
-- `sequences/worker/`：并发构造和启动 API sequence；
+- `sequences/worker/`：并发构造和启动 API sequence；LR/SC worker 通过 AMO API
+  生成 LR，直接构造 SC item，并在 worker 内复制配对字段；
 - `vsequences/`：跨 active requester 编排 worker；test 只配置并启动对应 vseq。
+
+Atomic test 使用 `hpdcache_atomic_seq` 在 `hpdcache_lrsc_seq` worker 和受约束
+随机的 `hpdcache_amo_seq_api` 之间随机选择。SC 的地址、size、byte enable 和
+PMA 在 worker 内从 LR item 复制；普通 AMO opcode 由 API 自己的约束生成，worker
+不复制普通 AMO opcode 列表；`hpdcache_atomic_vseq` 为每个 active requester
+启动一个 worker，`hpdcache_atomic_test` 只注入 sequencer、配置 item 数并启动
+vseq。
 
 `hpdcache_base_vseq` 保存所有 active CRI sequencer handle。base test 在启动 vseq
 前通过 `init_vseq()` 从 env 注入这些 handle，base vseq 在 `pre_start()` 统一检查
@@ -165,10 +175,22 @@ base 不再维护 outstanding map。多个单笔 API 可以共享同一个 seque
 
 ## 8. Predictor 和 Cacheable Evaluator
 
-predictor 只消费 CRI request。STORE 在未 abort 时按 BE 更新 byte-valid shadow
-memory；LOAD 的期望有效范围由地址 lane 和 size 决定。cold load 暂存到
-`pending_expected_q[{SID,TID}]`，下游 memory read response 补齐未知 byte 后再
-按同 key 的请求顺序发布。
+predictor 消费 CRI request、普通 memory read response 和 monitor 组装完成的 CMI
+atomic transaction。STORE 在未 abort 时按 BE 更新 golden memory；LOAD 的期望
+有效范围由地址 lane 和 size 决定。cold load 暂存到
+`pending_expected_q[{SID,TID}]`，下游普通 memory read response 补齐未知 byte 后再
+按同 key 的请求顺序发布。memory model 的 atomic response 不直接更新 reference
+model；CMI monitor 将 atomic request、read old value 和 write response 组装成完整
+事务。cacheable 普通 AMO 和 LR 与 LOAD 复用同一套旧值预测：request 到达时先从
+golden memory 填充 requested byte，全部已知时立即发布 expected；只有仍有未知
+byte 时才等待对应 downstream old-value response 补齐。atomic transaction 完成后，
+reference model 计算 AMO 结果并更新 golden memory。SC 返回 success/failure 状态，
+不使用旧值预测。
+
+reference model 不维护 cache shadow。CMO 不改变 golden byte value；invalidate
+只丢弃可能只存在于 cache 中的 byte-valid knowledge，后续 refill 再从 memory
+response 学习，这样可以间接检查 CMO 的可见性。flush 类 CMO 不执行任何
+golden-memory 操作，因为它不会改变整个 memory 的架构值。
 
 abort request 不更新 reference state。需要 response 时 predictor 立即生成
 `aborted=1` 的 expected；`need_rsp=0` 不生成 expected。
@@ -177,44 +199,43 @@ predictor 通过 `clone()` 创建每笔 expected；两个 evaluator 在接收事
 也通过 `clone()` 保存独立副本，避免发布方后续修改事务影响延迟比较。
 
 `hpdcache_cacheable_evaluator` 保留原 evaluator 的 `{SID,TID}` FIFO compare
-模式，并增加 abort/error 对比及 uncacheable 路由过滤。cacheable LOAD 只比较
-`data_valid=1` 的 byte，STORE 检查 response 对齐及状态。
+模式，并增加 abort/error 对比及 uncacheable 路由过滤。cacheable LOAD 和 AMO
+只比较 `data_valid=1` 的 byte，STORE/CMO 检查 response 状态。
 
-## 9. Uncacheable Evaluator
+LR 的 CMI LDEX 完成时建立 8-byte reservation。普通 STORE 或 AMO 命中该地址时
+清除 reservation；SC 请求到达 predictor 时立即检查并清除 reservation，并在
+expected item 中记录该 SC 是否应产生 CMI STEX。该标记只描述 forwarding 预期，
+下游 STEX 仍可能返回 exclusive failure。
 
-`hpdcache_cmi_monitor` 只发布 uncacheable CMI request/response。write address 与
+## 9. UC/AMO Forwarding Evaluator
+
+`hpdcache_cmi_monitor` 捕获所有 CMI request/response；UC/AMO forwarding evaluator
+只接收其中的 uncacheable 普通读写和全部 AMO。write address 与
 write data channel 分别排队，按 address 顺序消费 `mem_req_len + 1` 个 data beat，
 并检查每拍 `mem_req_w_last`。cacheable burst 也必须完整消费后才能过滤，避免
 剩余 beat 与后续 uncacheable request 错配。uncacheable write 必须为单拍，
-配对后形成一笔 CMI request；response 使用协议保留
-的全 1 memory ID 过滤，只采集 response channel 自身提供的字段，不恢复 request
-上下文，也不检查 memory ID 的正确性。monitor 另外按读 request/response beat
-和写 AW/B 配对维护 memory traffic outstanding 计数，只有这些计数及写通道暂存队列
-全部清空时才报告 idle。
+monitor 按 memory ID 保存 read request 和组装后的 write request，并将 read beat、
+write response 合并回 request context。所有 pending request、write channel 暂存
+队列和未返回 write response 全部清空时才报告 idle。
 
-monitor 发布的实际对象类型为 `hpdcache_cmi_item`，analysis port 仍使用
-`memory_txn` 基类类型。派生 item 补充协议字段的 UVM field registration，因为
-第三方基类只注册了两个 timing 配置字段，直接 clone 基类会丢失地址、数据等字段。
+monitor 通过三个 typed analysis port 发布 CMI：普通读写分别进入
+`read_ap`/`write_ap`，完整 AMO（包括 LR、SC 以及同时具有读写响应的 AMO）进入
+`atomic_ap`。后者使用 `hpdcache_cmi_atomic_item`，同时携带 request、old-value
+read response、write response 和 STEX exclusive status，避免订阅者再用 `cmd`
+区分 AMO。
 
-`hpdcache_uncacheable_evaluator` 内有三条相互衔接的检查路径：
+`hpdcache_uc_amo_forwarding_evaluator` 接收 monitor 已组装的完整 CRI 和 CMI
+transaction。它过滤 cacheable 普通 LOAD/STORE，将所有 uncacheable 普通访问和
+全部 AMO 分别放入全局 FIFO 后顺序配对。每一对 transaction 检查地址、command、
+transfer mask、STORE/AMO operand、response error、LOAD/AMO old value 和 SC status；
+`need_rsp=0` 的 CRI transaction 同样参与 request 比较，但不要求 CRI response。
+cacheable 普通 response 在完整 CRI transaction 进入 evaluator 时即被过滤，不影响
+这条 FIFO 的顺序。
 
-- CRI request/response path：所有 `need_rsp=1` 的 uncacheable LOAD/STORE request
-  进入全局顺序 queue。response 先通过 SID/TID 判断是否属于待返回的 uncacheable
-  request；匹配项不是 queue head 时报告 response order mismatch，并只删除实际匹配
-  的 request，避免一次顺序错误导致后续比较级联错位；
-
-- request path：CRI request queue 对 CMI request queue，检查地址、read/write
-  command、transfer mask，以及 STORE 有效 byte 的 write data；
-- response path：CRI response queue 对 CMI response queue，只比较两个 response
-  item 共同具备的 error；read response 额外比较完整 data。
-
-cacheable response 可以穿插在 CRI response stream 中；由于 outstanding TID 在
-response 前不会复用，evaluator 可用 SID/TID 只筛出属于 uncacheable pending queue
-的 response，再以全局 queue head 检查 uncacheable 的 in-order 约束。
-
-evaluator 不把 CRI request context 带入 CRI/CMI response compare。唯一跨 request
-和 response 阶段保留的是 `need_rsp` bit queue，用于消费不会产生 CRI response 的
-CMI response，保持两侧 response queue 对齐。
+SC 是例外：UC/AMO forwarding evaluator 订阅 predictor 发布的显式 forwarding 预期。
+没有有效 reservation 的 SC 必须由 DUT 本地返回 failure，且不得错误消费队首 CMI；
+预期 forwarding 的 SC 必须与真实 STEX 配对，再根据 CMI write response 检查最终
+success/failure status。evaluator 不再通过 CRI/CMI 队首是否匹配来猜测 SC 路径。
 
 abort 请求不得出现在 CMI；需要 response 的 abort 必须收到 CRI
 `aborted=1,error=0`。对于 `need_rsp=0` 的正常 forwarding，CMI response 仍被
@@ -223,16 +244,16 @@ abort 请求不得出现在 CMI；需要 response 的 abort 必须收到 CRI
 ## 10. 结束、检查和统计
 
 base test 是唯一 objection owner。random vseq 及其四个 worker 完成后，test 最多
-等待 1 ms，
+等待 10 ms，
 直到下列状态全部为空：
 
 - active driver 的 request/tag/outstanding 状态；
 - sequencer TID mailbox；
 - CRI/CMI monitor context；
 - predictor pending expected；
-- cacheable 与 uncacheable evaluator queue。
+- cacheable 与 UC/AMO forwarding evaluator queue。
 
-顶层全局仿真时间保护超时为 5 ms，Python wrapper 另行限制 simulator 的 wall-clock
+顶层全局仿真时间保护超时为 100 ms，Python wrapper 另行限制 simulator 的 wall-clock
 时间，以覆盖 license、加载和 Tcl 卡死。各 component 在 `check_phase` 报告未配对状态，在
 `report_phase` 打印 request、VIPT、abort、response、prediction、compare 和
 outstanding 数量。非致命检查统一使用 `HPDCACHE_CHK_*` ID；schema 1 的环境记录
@@ -253,14 +274,21 @@ export QUESTA_HOME=/path/to/modeltech
 make test
 ```
 
-memory model 当前采用 in-order、zero-delay、无 backpressure、无 error injection
-配置。build 和 simulation log 位于 `build/questa/`。
+memory response model 当前采用 in-order、normal response timing、LIGHT 随机
+backpressure；普通 read/write、AMO error 和 read-side exclusive-fail injection
+关闭，write-side exclusive-fail injection 开启 16 次，用于检查 STEX failure。
+build 和 simulation log 位于 `build/questa/`。
+
+`hpdcache_atomic_test` 使用同一套 drain 和 scoreboard 检查，运行命令为：
+
+```sh
+make test TEST=hpdcache_atomic_test SEED=1
+```
 
 ## 12. 尚未覆盖
 
 - IO PMA 访问；
-- 默认 random 中的 AMO/CMO（item 已支持，由 directed sequence 启用）；
 - active stride-prefetch 配置和 checking；
-- memory delay/out-of-order/backpressure/error injection campaign；
+- memory out-of-order/error injection campaign；
 - functional/code coverage、性能采样和项目自有 SVA；
 - CVA6 之外的其他 HPDcache 参数组合。

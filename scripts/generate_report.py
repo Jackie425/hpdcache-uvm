@@ -73,9 +73,18 @@ CHECK_SPECS = (
         "Predictor",
         "HPDCACHE_CHK_PREDICTOR",
         "HPDCACHE_RPT_CHECK_PREDICTOR",
-        ("requests", "predictions", "abort_predictions", "no_rsp", "pending"),
+        (
+            "requests",
+            "predictions",
+            "abort_predictions",
+            "no_rsp",
+            "pending",
+            "atomic_updates",
+            "atomic_predictions",
+            "pending_atomics",
+        ),
         ("predictions",),
-        (("pending", 0),),
+        (("pending", 0), ("pending_atomics", 0)),
     ),
     CheckSpec(
         "cacheable",
@@ -86,10 +95,10 @@ CHECK_SPECS = (
         ("checked",),
     ),
     CheckSpec(
-        "uncacheable",
-        "Uncacheable requests/responses",
-        "HPDCACHE_CHK_UNCACHEABLE",
-        "HPDCACHE_RPT_CHECK_UNCACHEABLE",
+        "uc_amo_forwarding",
+        "UC/AMO forwarding requests/responses",
+        "HPDCACHE_CHK_UC_AMO_FORWARDING",
+        "HPDCACHE_RPT_CHECK_UC_AMO_FORWARDING",
         (
             "cri_requests",
             "cri_responses",
@@ -152,6 +161,7 @@ SINGLE_RECORD_FIELDS = {
         "has_prefetcher",
     ),
     "HPDCACHE_RPT_TRAFFIC_CMI": ("requests", "responses"),
+    "HPDCACHE_RPT_CHECK_ATOMIC": ("checked", "local_sc_failures"),
     "HPDCACHE_RPT_END": ("complete",),
     **{
         spec.report_id: spec.required_fields

@@ -242,7 +242,8 @@ module top;
   assign axi_vif.ar_size   = mem_req_read.mem_req_size;
   assign axi_vif.ar_id     = mem_req_read.mem_req_id;
   assign axi_vif.ar_burst  = BURST_INCR;
-  assign axi_vif.ar_lock   = 1'b0;
+  assign axi_vif.ar_lock   = (mem_req_read.mem_req_command == HPDCACHE_MEM_ATOMIC) &&
+                             (mem_req_read.mem_req_atomic == HPDCACHE_MEM_ATOMIC_LDEX);
   assign axi_vif.ar_cache  = CACHE_BUFFERABLE;
   assign axi_vif.ar_prot   = '0;
   assign axi_vif.ar_qos    = '0;
@@ -273,7 +274,31 @@ module top;
   assign axi_vif.aw_user   = mem_req_write.mem_req_cacheable;
   assign axi_vif.aw_lock   = (mem_req_write.mem_req_command == HPDCACHE_MEM_ATOMIC) &&
                              (mem_req_write.mem_req_atomic == HPDCACHE_MEM_ATOMIC_STEX);
-  assign axi_vif.aw_atop   = '0; // AMO is outside the current minimal scope.
+  always_comb begin
+    axi_vif.aw_atop = '0;
+    if (mem_req_write.mem_req_command == HPDCACHE_MEM_ATOMIC) begin
+      case (mem_req_write.mem_req_atomic)
+        HPDCACHE_MEM_ATOMIC_ADD:  axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_ADD};
+        HPDCACHE_MEM_ATOMIC_CLR:  axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_CLR};
+        HPDCACHE_MEM_ATOMIC_SET:  axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_SET};
+        HPDCACHE_MEM_ATOMIC_EOR:  axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_EOR};
+        HPDCACHE_MEM_ATOMIC_SMAX: axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_SMAX};
+        HPDCACHE_MEM_ATOMIC_SMIN: axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_SMIN};
+        HPDCACHE_MEM_ATOMIC_UMAX: axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_UMAX};
+        HPDCACHE_MEM_ATOMIC_UMIN: axi_vif.aw_atop = {AXI_ATOMIC_LOAD, 1'b0,
+                                                      AXI_ATOMIC_UMIN};
+        HPDCACHE_MEM_ATOMIC_SWAP: axi_vif.aw_atop = {AXI_ATOMIC_OTHERS, 4'b0000};
+        default:                  axi_vif.aw_atop = '0;
+      endcase
+    end
+  end
 
   assign mem_req_write_data_ready = axi_vif.w_ready;
   assign axi_vif.w_valid = mem_req_write_data_valid;
@@ -446,7 +471,7 @@ module top;
     mem_rsp_vif.req_strb  = selected_memory_request.strb;
     mem_rsp_vif.req_amo   = selected_memory_request.amo;
     mem_rsp_vif.amo_op    = selected_memory_request.amo_op;
-    mem_rsp_vif.req_ready = 1'b1;
+    mem_rsp_vif.req_ready = mem_rsp_vif.req_ready_bp;
   end
 
   assign mem_rsp_vif.rd_res_ready = 1'b1;
@@ -493,7 +518,10 @@ module top;
   end
 
   initial begin
-    #5ms;
+    // Random response backpressure can stretch a 4000-request run beyond
+    // several milliseconds.  Keep a generous simulation-time guard so the
+    // watchdog catches a real hang without truncating valid regressions.
+    #100ms;
     $fatal(1, "global random-test timeout");
   end
 

@@ -5,13 +5,18 @@ class hpdcache_cmi_monitor extends uvm_monitor;
 
   uvm_analysis_port #(hpdcache_cmi_read_item) read_ap;
   uvm_analysis_port #(hpdcache_cmi_write_item) write_ap;
+  uvm_analysis_port #(hpdcache_cmi_atomic_item) atomic_ap;
 
   protected hpdcache_mem_req_t write_address_q[$];
   protected hpdcache_mem_req_w_t write_data_q[$];
-  protected hpdcache_cmi_read_item pending_read_requests[
+  protected hpdcache_cmi_item pending_read_requests[
     bit [MEM_ID_WIDTH-1:0]
   ][$];
-  protected hpdcache_cmi_write_item pending_write_requests[
+  // Track every write request, including cacheable writes.  AXI write
+  // responses do not carry cacheability, so dropping cacheable requests here
+  // would let their B responses consume an older uncacheable entry with the
+  // same ID.
+  protected hpdcache_cmi_item pending_write_requests[
     bit [MEM_ID_WIDTH-1:0]
   ][$];
   protected int unsigned observed_requests;
@@ -23,6 +28,7 @@ class hpdcache_cmi_monitor extends uvm_monitor;
     super.new(name, parent);
     read_ap = new("read_ap", this);
     write_ap = new("write_ap", this);
+    atomic_ap = new("atomic_ap", this);
   endfunction
 
   function void build_phase(uvm_phase phase);
@@ -94,39 +100,50 @@ class hpdcache_cmi_monitor extends uvm_monitor;
     item.atop = mem_atomic_t'(request.mem_req_atomic);
     item.request_valid = 1'b1;
     item.request_cacheable = request.mem_req_cacheable;
+    item.request_len = request.mem_req_len;
   endfunction
 
-  protected function hpdcache_cmi_read_item make_read_request(
+  protected function hpdcache_cmi_item make_read_request(
     hpdcache_mem_req_t request
   );
-    hpdcache_cmi_read_item item;
+    hpdcache_cmi_item item;
 
-    item = hpdcache_cmi_read_item::type_id::create("observed_cmi_read");
+    if (request.mem_req_command == HPDCACHE_MEM_ATOMIC)
+      item = hpdcache_cmi_atomic_item::type_id::create(
+        "observed_cmi_atomic_read"
+      );
+    else
+      item = hpdcache_cmi_read_item::type_id::create("observed_cmi_read");
     initialize_request(item, request);
     item.request_data = '0;
     item.request_strb = transfer_mask(request);
     return item;
   endfunction
 
-  protected function hpdcache_cmi_write_item make_write_request(
+  protected function hpdcache_cmi_item make_write_request(
     hpdcache_mem_req_t request,
     hpdcache_mem_req_w_t write_data
   );
-    hpdcache_cmi_write_item item;
+    hpdcache_cmi_item item;
 
-    item = hpdcache_cmi_write_item::type_id::create("observed_cmi_write");
+    if (request.mem_req_command == HPDCACHE_MEM_ATOMIC)
+      item = hpdcache_cmi_atomic_item::type_id::create(
+        "observed_cmi_atomic_write"
+      );
+    else
+      item = hpdcache_cmi_write_item::type_id::create("observed_cmi_write");
     initialize_request(item, request);
     item.request_data = write_data.mem_req_w_data;
     item.request_strb = write_data.mem_req_w_be;
+    item.write_data_q.push_back(write_data.mem_req_w_data);
+    item.write_strb_q.push_back(write_data.mem_req_w_be);
     return item;
   endfunction
 
   protected function void sample_read_request(hpdcache_mem_req_t request);
-    hpdcache_cmi_read_item item;
+    hpdcache_cmi_item item;
 
-    if (request.mem_req_cacheable)
-      return;
-    if (request.mem_req_len != 0) begin
+    if (!request.mem_req_cacheable && request.mem_req_len != 0) begin
       `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
         "uncacheable read must be single-beat addr=0x%0h len=%0d",
         request.mem_req_addr, request.mem_req_len))
@@ -140,7 +157,9 @@ class hpdcache_cmi_monitor extends uvm_monitor;
   protected function void complete_write_requests();
     hpdcache_mem_req_t request;
     hpdcache_mem_req_w_t write_data;
-    hpdcache_cmi_write_item item;
+    hpdcache_mem_req_w_t write_beats[$];
+    hpdcache_cmi_item item;
+    hpdcache_cmi_atomic_item atomic_item;
     int unsigned beats;
 
     while (write_address_q.size() != 0 && write_data_q.size() != 0) begin
@@ -152,6 +171,7 @@ class hpdcache_cmi_monitor extends uvm_monitor;
       // that will be filtered out, before pairing the next address.
       for (int unsigned i = 0; i < beats; i++) begin
         write_data = write_data_q.pop_front();
+        write_beats.push_back(write_data);
         if (write_data.mem_req_w_last !== (i == beats - 1))
           `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
             "write burst LAST mismatch addr=0x%0h beat=%0d len=%0d last=%0b",
@@ -163,48 +183,103 @@ class hpdcache_cmi_monitor extends uvm_monitor;
         `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
           "uncacheable write must be single-beat addr=0x%0h len=%0d",
           request.mem_req_addr, request.mem_req_len))
+        write_beats.delete();
         continue;
       end
-      if (request.mem_req_cacheable)
-        continue;
-
-      item = make_write_request(request, write_data);
+      item = make_write_request(request, write_beats[0]);
+      item.write_data_q.delete();
+      item.write_strb_q.delete();
+      foreach (write_beats[i]) begin
+        item.write_data_q.push_back(write_beats[i].mem_req_w_data);
+        item.write_strb_q.push_back(write_beats[i].mem_req_w_be);
+      end
+      write_beats.delete();
       pending_write_requests[item.id].push_back(item);
+      if ($cast(atomic_item, item) && atomic_item.atop != MEM_ATOMIC_STEX)
+        pending_read_requests[item.id].push_back(atomic_item);
       observed_requests++;
     end
   endfunction
 
   protected function void sample_read_response(hpdcache_mem_resp_r_t response);
-    hpdcache_cmi_read_item item;
+    hpdcache_cmi_item item;
+    hpdcache_cmi_atomic_item atomic_item;
+    hpdcache_cmi_read_item read_item;
     bit [MEM_ID_WIDTH-1:0] response_id;
+    bit response_error;
 
     response_id = response.mem_resp_r_id;
 
-    if (!pending_read_requests.exists(response_id) ||
-        pending_read_requests[response_id].size() == 0) begin
-      if (response_id === {MEM_ID_WIDTH{1'b1}})
+    response_error = response.mem_resp_r_error != HPDCACHE_MEM_RESP_OK;
+    if (pending_read_requests.exists(response_id) &&
+        pending_read_requests[response_id].size() != 0) begin
+      item = pending_read_requests[response_id][0];
+      item.read_data_q.push_back(response.mem_resp_r_data);
+      item.read_error_q.push_back(response_error);
+      item.response_data = response.mem_resp_r_data;
+      item.err |= response_error;
+
+      if (response.mem_resp_r_last !==
+          (item.read_data_q.size() == item.request_len + 1))
         `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
-          "uncacheable read response ID=0x%0h has no pending request",
-          response_id))
+          "read response LAST mismatch ID=0x%0h beat=%0d len=%0d last=%0b",
+          response_id, item.read_data_q.size() - 1, item.request_len,
+          response.mem_resp_r_last))
+      if (!response.mem_resp_r_last)
+        return;
+
+      void'(pending_read_requests[response_id].pop_front());
+      if (pending_read_requests[response_id].size() == 0)
+        pending_read_requests.delete(response_id);
+      item.read_response_valid = 1'b1;
+      if ($cast(atomic_item, item)) begin
+        // LR/LDEX is issued on the read channel and has no AXI B response.
+        if (atomic_item.atop == MEM_ATOMIC_LDEX)
+          atomic_item.write_response_valid = 1'b1;
+        publish_atomic_if_complete(atomic_item);
+      end else begin
+        if (!$cast(read_item, item))
+          `uvm_fatal(get_type_name(),
+                     "read response did not match a read item")
+        item.response_valid = 1'b1;
+        observed_responses++;
+        read_ap.write(read_item);
+      end
       return;
     end
 
-    if (response.mem_resp_r_last !== 1'b1)
-      `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
-        "uncacheable read response must assert LAST ID=0x%0h last=%0b",
-        response_id, response.mem_resp_r_last))
-    item = pending_read_requests[response_id].pop_front();
-    if (pending_read_requests[response_id].size() == 0)
-      pending_read_requests.delete(response_id);
-    item.response_data = response.mem_resp_r_data;
-    item.err = response.mem_resp_r_error != HPDCACHE_MEM_RESP_OK;
+    `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
+      "read response ID=0x%0h has no pending request", response_id))
+  endfunction
+
+  protected function void publish_write_if_complete(
+    hpdcache_cmi_write_item item
+  );
+    if (!item.write_response_valid)
+      return;
     item.response_valid = 1'b1;
     observed_responses++;
-    read_ap.write(item);
+    write_ap.write(item);
+  endfunction
+
+  protected function void publish_atomic_if_complete(
+    hpdcache_cmi_atomic_item item
+  );
+    bit needs_read_response;
+
+    needs_read_response = item.atop != MEM_ATOMIC_STEX;
+    if (!item.write_response_valid ||
+        (needs_read_response && !item.read_response_valid))
+      return;
+    item.response_valid = 1'b1;
+    observed_responses++;
+    atomic_ap.write(item);
   endfunction
 
   protected function void sample_write_response(hpdcache_mem_resp_w_t response);
-    hpdcache_cmi_write_item item;
+    hpdcache_cmi_item item;
+    hpdcache_cmi_atomic_item atomic_item;
+    hpdcache_cmi_write_item write_item;
     bit [MEM_ID_WIDTH-1:0] response_id;
 
     response_id = response.mem_resp_w_id;
@@ -216,20 +291,25 @@ class hpdcache_cmi_monitor extends uvm_monitor;
 
     if (!pending_write_requests.exists(response_id) ||
         pending_write_requests[response_id].size() == 0) begin
-      if (response_id === {MEM_ID_WIDTH{1'b1}})
-        `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
-          "uncacheable write response ID=0x%0h has no pending request",
-          response_id))
+      `uvm_error("HPDCACHE_CHK_CMI", $sformatf(
+        "write response ID=0x%0h has no pending request", response_id))
       return;
     end
 
     item = pending_write_requests[response_id].pop_front();
     if (pending_write_requests[response_id].size() == 0)
       pending_write_requests.delete(response_id);
-    item.response_valid = 1'b1;
-    item.err = response.mem_resp_w_error != HPDCACHE_MEM_RESP_OK;
-    observed_responses++;
-    write_ap.write(item);
+    item.err |= response.mem_resp_w_error != HPDCACHE_MEM_RESP_OK;
+    item.write_response_valid = 1'b1;
+    item.exclusive_success = response.mem_resp_w_is_atomic;
+    if ($cast(atomic_item, item)) begin
+      publish_atomic_if_complete(atomic_item);
+    end else begin
+      if (!$cast(write_item, item))
+        `uvm_fatal(get_type_name(),
+                   "write response did not match a write item")
+      publish_write_if_complete(write_item);
+    end
   endfunction
 
   function void reset_state();
