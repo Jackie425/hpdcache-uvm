@@ -25,6 +25,7 @@ class hpdcache_cri_driver extends uvm_driver #(hpdcache_cri_item);
   protected int unsigned received_responses;
   protected int unsigned aborted_responses;
   protected int unsigned no_response_completions;
+  protected int unsigned reset_cancelled_requests;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -335,6 +336,7 @@ class hpdcache_cri_driver extends uvm_driver #(hpdcache_cri_item);
 
     foreach (cancelled_requests[i])
       put_completion(cancelled_requests[i], 1'b1);
+    reset_cancelled_requests += cancelled_requests.size();
   endtask
 
   function void reset_state();
@@ -362,11 +364,15 @@ class hpdcache_cri_driver extends uvm_driver #(hpdcache_cri_item);
     return outstanding_requests.num();
   endfunction
 
+  function automatic int unsigned num_reset_cancelled();
+    return reset_cancelled_requests;
+  endfunction
+
   virtual function void report_phase(uvm_phase phase);
     super.report_phase(phase);
     `uvm_info(get_type_name(), $sformatf(
-      "accepted=%0d VIPT_tags=%0d responses=%0d aborted_responses=%0d no_rsp_completions=%0d",
+      "accepted=%0d VIPT_tags=%0d responses=%0d aborted_responses=%0d no_rsp_completions=%0d reset_cancelled=%0d",
       accepted_requests, driven_tags, received_responses, aborted_responses,
-      no_response_completions), UVM_LOW)
+      no_response_completions, reset_cancelled_requests), UVM_LOW)
   endfunction
 endclass

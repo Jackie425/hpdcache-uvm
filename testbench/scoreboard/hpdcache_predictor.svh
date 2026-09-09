@@ -298,6 +298,12 @@ class hpdcache_predictor extends uvm_component;
     pending_atomic_expected_q.delete();
   endtask
 
+  function void reset_state();
+    reference_model.reset();
+    pending_expected_q.delete();
+    pending_atomic_expected_q.delete();
+  endfunction
+
   function void write_cmi_atomic(hpdcache_cmi_atomic_item t);
     applied_atomic_transactions++;
     if (t.atop != MEM_ATOMIC_STEX)

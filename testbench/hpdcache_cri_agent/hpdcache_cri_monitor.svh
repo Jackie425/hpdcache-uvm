@@ -180,6 +180,10 @@ class hpdcache_cri_monitor extends uvm_monitor;
     return pending_requests.size() == 0 && pending_transactions.num() == 0;
   endfunction
 
+  function automatic int unsigned num_observed_requests();
+    return observed_requests;
+  endfunction
+
   function void reset_state();
     pending_requests.delete();
     pending_transactions.delete();

@@ -9,3 +9,5 @@ tests:
     runs: 100
   - test: hpdcache_atomic_test
     runs: 10
+  - test: hpdcache_on_the_fly_reset_test
+    runs: 10

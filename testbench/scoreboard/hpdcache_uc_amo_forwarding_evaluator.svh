@@ -355,6 +355,12 @@ class hpdcache_uc_amo_forwarding_evaluator extends uvm_component;
     sc_expect_cmi_q.delete();
   endtask
 
+  function void reset_state();
+    cri_transaction_q.delete();
+    cmi_transaction_q.delete();
+    sc_expect_cmi_q.delete();
+  endfunction
+
   virtual function void check_phase(uvm_phase phase);
     super.check_phase(phase);
     if (!is_idle())

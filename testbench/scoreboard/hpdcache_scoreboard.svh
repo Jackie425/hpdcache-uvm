@@ -80,6 +80,12 @@ class hpdcache_scoreboard extends uvm_scoreboard;
     );
   endfunction
 
+  function void reset_state();
+    predictor.reset_state();
+    cacheable_evaluator.reset_state();
+    uc_amo_forwarding_evaluator.reset_state();
+  endfunction
+
   virtual function void report_phase(uvm_phase phase);
     super.report_phase(phase);
     `uvm_info(get_type_name(), $sformatf(

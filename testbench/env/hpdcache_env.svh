@@ -5,12 +5,13 @@ class hpdcache_env extends uvm_env;
   hpdcache_cri_agent cri_agents[NREQUESTERS];
   hpdcache_cmi_agent cmi_agent;
   hpdcache_scoreboard scoreboard;
-  memory_response_model #(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH) mem_rsp_model;
-  axi2mem #(MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH, 1) axi_bridge;
+  hpdcache_memory_response_model mem_rsp_model;
+  hpdcache_axi2mem axi_bridge;
   memory_rsp_cfg mem_cfg;
-  clock_driver_c clock_driver;
+  hpdcache_clock_driver clock_driver;
   clock_config_c clock_cfg;
-  reset_driver_c #(1'b1, 8, 0) reset_driver;
+  hpdcache_reset_driver reset_driver;
+  virtual xrtl_reset_vif #(1'b1, 8, 0) reset_vif;
 
   function new(string name, uvm_component parent);
     super.new(name, parent);
@@ -28,12 +29,15 @@ class hpdcache_env extends uvm_env;
     );
     scoreboard = hpdcache_scoreboard::type_id::create("scoreboard", this);
     cmi_agent = hpdcache_cmi_agent::type_id::create("cmi_agent", this);
-    clock_driver = clock_driver_c::type_id::create("clock_driver", this);
+    clock_driver = hpdcache_clock_driver::type_id::create("clock_driver", this);
     clock_cfg = clock_config_c::type_id::create("clock_cfg", this);
     clock_driver.m_clk_cfg = clock_cfg;
-    reset_driver = reset_driver_c#(1'b1, 8, 0)::type_id::create(
+    reset_driver = hpdcache_reset_driver::type_id::create(
       "hpdcache_reset_driver", this
     );
+    if (!uvm_config_db#(virtual xrtl_reset_vif#(1'b1, 8, 0))::get(
+          this, "", "hpdcache_reset_driver", reset_vif))
+      `uvm_fatal(get_type_name(), "reset interface was not configured")
 
     for (int unsigned i = 0; i < NREQUESTERS; i++) begin
       uvm_config_db#(hpdcache_cri_agent_config)::set(
@@ -46,13 +50,18 @@ class hpdcache_env extends uvm_env;
 
     mem_cfg = cfg.mem_cfg;
 
-    mem_rsp_model = memory_response_model#(
-      MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH
-    )::type_id::create("mem_rsp_model", this);
-    axi_bridge = axi2mem#(
-      MEM_ADDR_WIDTH, MEM_DATA_WIDTH, MEM_ID_WIDTH, 1
-    )::type_id::create("axi2mem_req", this);
+    mem_rsp_model = hpdcache_memory_response_model::type_id::create(
+      "mem_rsp_model", this);
+    axi_bridge = hpdcache_axi2mem::type_id::create("axi2mem_req", this);
   endfunction
+
+  virtual task run_phase(uvm_phase phase);
+    super.run_phase(phase);
+    forever begin
+      @(negedge reset_vif.reset_n);
+      scoreboard.reset_state();
+    end
+  endtask
 
   function void end_of_elaboration_phase(uvm_phase phase);
     super.end_of_elaboration_phase(phase);
@@ -88,6 +97,8 @@ class hpdcache_env extends uvm_env;
   function automatic bit is_drained();
     if (!scoreboard.is_idle())
       return 1'b0;
+    if (!mem_rsp_model.is_idle() || !axi_bridge.is_idle())
+      return 1'b0;
     if (!cmi_agent.is_idle())
       return 1'b0;
     foreach (cri_agents[i]) begin
@@ -119,7 +130,7 @@ class hpdcache_env extends uvm_env;
     fork : drain_or_timeout
       begin
         do
-          clock_driver.m_v_clock_vif.wait_n_clocks(1);
+          clock_driver.wait_n_clocks(1);
         while (!is_drained());
       end
       begin

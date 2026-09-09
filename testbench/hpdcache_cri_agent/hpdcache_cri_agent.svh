@@ -40,10 +40,9 @@ class hpdcache_cri_agent extends uvm_agent;
   virtual task reset_phase(uvm_phase phase);
     super.reset_phase(phase);
     if (cfg.active) begin
-      // A UVM reset phase terminates the old stimulus epoch.  Remove requests
-      // still owned by the sequencer, then discard driver-held contexts before
-      // making every protocol TID available to the next epoch.
-      sequencer.stop_sequences();
+      // No sequence is active during the initial UVM reset phase.  Runtime
+      // resets are handled by the driver's reset-aware state machine, so the
+      // sequencer is deliberately left running and is never force-stopped.
       driver.reset_state();
       sequencer.reset_tid_pool();
     end

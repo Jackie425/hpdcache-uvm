@@ -49,6 +49,11 @@ class hpdcache_cacheable_evaluator extends uvm_component;
     expected_by_key.delete();
   endtask
 
+  function void reset_state();
+    actual_by_key.delete();
+    expected_by_key.delete();
+  endfunction
+
   function void write_cacheable_actual(hpdcache_cri_resp_item t);
     key_t transaction_key;
     hpdcache_cri_resp_item snapshot;

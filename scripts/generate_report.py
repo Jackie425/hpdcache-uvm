@@ -239,6 +239,7 @@ def _analyze_stimulus(
     completed: int,
     incomplete: list[str],
     failures: list[str],
+    reset_test: bool = False,
 ) -> dict[str, Any]:
     sequences = [dict(record) for record in records]
     planned_values: list[int] = []
@@ -256,13 +257,47 @@ def _analyze_stimulus(
                 all_planned = False
 
     planned = sum(planned_values) if all_planned else None
-    if planned is not None and completed != planned:
-        failures.append(f"stimulus completed {completed} of {planned} planned items")
+    if planned is not None:
+        if reset_test and completed > planned:
+            failures.append(
+                f"reset stimulus observed {completed} items above {planned} planned items"
+            )
+        elif not reset_test and completed != planned:
+            failures.append(
+                f"stimulus completed {completed} of {planned} planned items"
+            )
     summary = dict(sequences[0]) if len(sequences) == 1 else {}
     summary.update(
         {"sequences": sequences, "completed": completed, "planned": planned}
     )
     return summary
+
+
+def _analyze_reset(
+    parsed: dict[str, Any],
+    reset_test: bool,
+    incomplete: list[str],
+) -> dict[str, Any]:
+    records = parsed["records"].get("HPDCACHE_RPT_RESET", [])
+    if not reset_test:
+        return {}
+    if len(records) != 1:
+        incomplete.append(
+            f"expected one HPDCACHE_RPT_RESET record, found {len(records)}"
+        )
+        return dict(records[0]) if records else {}
+
+    record = dict(records[0])
+    accounting_records = parsed["records"].get("HPDCACHE_RPT_RESET_ACCOUNTING", [])
+    if reset_test and len(accounting_records) != 1:
+        incomplete.append(
+            "expected one HPDCACHE_RPT_RESET_ACCOUNTING record, "
+            f"found {len(accounting_records)}"
+        )
+    if accounting_records:
+        accounting = dict(accounting_records[0])
+        record["accounting"] = accounting
+    return record
 
 
 def _check_activity(
@@ -396,12 +431,15 @@ def analyze(
         integer(record, "requests", incomplete, "HPDCACHE_RPT_TRAFFIC_CRI")
         for record in cri_records
     )
+    reset_test = meta.get("test") == "hpdcache_on_the_fly_reset_test"
     stimulus = _analyze_stimulus(
         records.get("HPDCACHE_RPT_STIMULUS", []),
         completed,
         incomplete,
         failures,
+        reset_test,
     )
+    reset = _analyze_reset(parsed, reset_test, incomplete)
     checks = _analyze_checks(
         parsed, cri_records, incomplete, failures
     )
@@ -431,6 +469,7 @@ def analyze(
         },
         "checks": checks,
         "drain": first_record(parsed, "HPDCACHE_RPT_DRAIN"),
+        "reset": reset,
         "uvm": parsed["severities"],
         "execution": {"simulator_returncode": simulator_returncode},
         "incomplete_reasons": incomplete,
@@ -446,6 +485,7 @@ def render_text(result: dict[str, Any]) -> str:
     cmi = result["traffic"]["cmi"]
     checks = result["checks"]
     drain = result["drain"]
+    reset = result.get("reset", {})
     uvm = result["uvm"]
     total_cri = {
         field: sum(number(record, field) for record in cri)
@@ -493,6 +533,27 @@ def render_text(result: dict[str, Any]) -> str:
         [
             f"Observed / planned  : {stimulus.get('completed', '?')} / "
             f"{planned if planned is not None else 'not reported'}",
+        ]
+    )
+    if reset:
+        accounting = reset.get("accounting", {})
+        lines.extend(
+            [
+                "",
+                "Reset",
+                "-----",
+                f"Resets              : {reset.get('resets', '?')}",
+                f"Signal driven       : {reset.get('signal_driven', '?')}",
+                f"Phase jump          : {reset.get('phase_jump', '?')}",
+                f"Recovery complete   : {reset.get('recovery_complete', '?')}",
+                f"Accounting          : {accounting.get('observed', '?')} observed + "
+                f"{accounting.get('legal_cancellations', '?')} cancelled / "
+                f"{accounting.get('planned', '?')} planned "
+                f"(balanced={accounting.get('balanced', '?')})",
+            ]
+        )
+    lines.extend(
+        [
             "",
             "Traffic",
             "-------",
