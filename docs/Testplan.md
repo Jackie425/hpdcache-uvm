@@ -47,7 +47,13 @@ prediction、actual/expected transaction 或 CMI outstanding traffic。
 
 当前计划不声明以下功能已经覆盖：IO PMA、
 主动 stride prefetch、memory out-of-order/error campaign、reset-in-flight 场景、
-功能/代码覆盖率、性能采样以及其他 HPDcache 参数配置。
+性能采样以及其他 HPDcache 参数配置。Questa code coverage 默认开启；单测生成
+`run.ucdb`、`run.coverage.rpt` 和 `run.coverage_html/index.html`，回归生成合并后的
+`coverage.ucdb`、`coverage.rpt` 和 `coverage_html/index.html`。可通过
+`COVERAGE=0` 关闭，或用 `COVERAGE_TYPES` 选择 `s/b/c/e/f/t/x` 覆盖类型；默认
+scope `/top/dut.` 递归包含 DUT 下的全部 RTL instance。
+断言覆盖率也会随 UCDB 保存并显示在 `regression.rpt` 的汇总中；`COVERAGE_TYPES`
+控制的是 statement/branch/condition/expression/FSM/toggle 等代码覆盖类型。
 
 运行 Questa：
 

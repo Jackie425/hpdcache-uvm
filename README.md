@@ -64,6 +64,25 @@ make test TEST=hpdcache_random_test SEED=1
 make test TEST=hpdcache_atomic_test SEED=1
 ```
 
+Questa code coverage is collected by default. A single test writes its UCDB,
+text report, and HTML report next to the normal test artifacts:
+
+```text
+build/questa/<config>/<test>/run.ucdb
+build/questa/<config>/<test>/run.coverage.rpt
+build/questa/<config>/<test>/run.coverage_html/index.html
+```
+
+The default coverage specification is `sbcefx`: statement, branch, condition,
+expression, FSM, and extended toggle coverage. Extended toggle includes the
+ordinary toggle transitions in the installed ModelSim release. Coverage is
+collected recursively below `/top/dut.` (the trailing dot is Questa's recursive
+instance selector). Assertion coverage is reported alongside these code metrics
+and is included in the aggregate regression total. Disable
+collection with `make test COVERAGE=0` or select categories with
+`COVERAGE_TYPES=sbcef`. The equivalent script options are `--no-coverage`,
+`--coverage`, and `--coverage-types`.
+
 `make test` defaults to `TEST=hpdcache_random_test` and `SEED=random`.
 
 The Makefile exposes two normal workflows: `test` and `regression`. Both
@@ -116,8 +135,18 @@ configurations, and records them in the report for reproduction.
 Artifacts are written under
 `build/questa/regression/<regression>/<config>/<test>/<seed>/`. The
 regression-level human and machine-readable summaries are `regression.rpt` and
-`regression.json` in the `<regression>` directory. A new invocation clears that
-regression directory before scheduling jobs. The runner returns nonzero when
+`regression.json` in the `<regression>` directory. With coverage enabled, all
+per-run UCDB files are merged into `coverage.ucdb` and rendered as
+`coverage.summary.rpt`, `coverage.rpt`, and `coverage_html/index.html` in the
+regression directory. `regression.rpt` contains the aggregate top-level
+percentages, including assertion coverage; `coverage.summary.rpt` is the
+per-instance text detail, including source-file and design-unit sections, and
+`coverage_html/index.html` provides the same data with navigable instance/source
+links. The aggregate bins in
+`regression.rpt` include every elaborated instance below `/top/dut.`; RTL files
+that are compiled but never instantiated are not included. A new invocation
+clears that regression directory before scheduling jobs. The runner returns
+nonzero when
 any job fails or is incomplete. Each summary row includes the sequence name and
 the number of checks that passed; the per-run report contains the full details.
 

@@ -290,5 +290,5 @@ make test TEST=hpdcache_atomic_test SEED=1
 - IO PMA 访问；
 - active stride-prefetch 配置和 checking；
 - memory out-of-order/error injection campaign；
-- functional/code coverage、性能采样和项目自有 SVA；
+- functional coverage、性能采样和项目自有 SVA；Questa code coverage 已由主流程默认收集；
 - CVA6 之外的其他 HPDcache 参数组合。

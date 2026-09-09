@@ -6,6 +6,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 import re
+import shutil
+import uuid
 import time
 from typing import Any
 
@@ -16,6 +18,15 @@ from sim_common import (
     questa_tool,
     run_logged,
     simulation_environment,
+)
+from coverage_utils import (
+    DEFAULT_COVERAGE_TYPES,
+    DEFAULT_COVERAGE_SCOPE,
+    coverage_record,
+    nonempty_file,
+    validate_coverage_scope,
+    generate_coverage_report,
+    normalize_coverage_types,
 )
 
 
@@ -36,6 +47,10 @@ class RunSpec:
     run_name: str = "run"
     timeout_seconds: float = 3600.0
     extra_args: tuple[str, ...] = ()
+    coverage: bool = True
+    coverage_types: str = DEFAULT_COVERAGE_TYPES
+    coverage_scope: str = DEFAULT_COVERAGE_SCOPE
+    generate_coverage_report: bool = True
 
 
 @dataclass(frozen=True)
@@ -47,6 +62,7 @@ class RunOutcome:
     report_path: Path
     json_path: Path
     console_path: Path
+    coverage_ucdb: Path | None = None
 
 
 def validate_run_spec(spec: RunSpec) -> None:
@@ -56,6 +72,8 @@ def validate_run_spec(spec: RunSpec) -> None:
         raise RuntimeError(f"invalid UVM test name: {spec.test}")
     if not RUN_NAME_RE.fullmatch(spec.run_name):
         raise RuntimeError(f"invalid run name: {spec.run_name}")
+    normalize_coverage_types(spec.coverage_types)
+    validate_coverage_scope(spec.coverage_scope)
 
 
 def execute_run(spec: RunSpec, *, live: bool = False) -> RunOutcome:
@@ -79,8 +97,27 @@ def execute_run(spec: RunSpec, *, live: bool = False) -> RunOutcome:
     report_path = spec.output_dir / f"{spec.run_name}.rpt"
     json_path = spec.output_dir / f"{spec.run_name}.json"
     wave_path = spec.output_dir / f"{spec.run_name}.wlf"
-    for path in (log_path, console_path, report_path, json_path, wave_path):
+    coverage_ucdb = spec.output_dir / f"{spec.run_name}.ucdb"
+    coverage_report = spec.output_dir / f"{spec.run_name}.coverage.rpt"
+    coverage_html = spec.output_dir / f"{spec.run_name}.coverage_html"
+    coverage_log = spec.output_dir / f"{spec.run_name}.coverage.log"
+    coverage_console = spec.output_dir / f"{spec.run_name}.coverage.console.log"
+    # Clean coverage artifacts even when disabled, so old results cannot look current.
+    for path in (log_path, console_path, report_path, json_path, wave_path,
+                 coverage_ucdb, coverage_report, coverage_log, coverage_console):
         path.unlink(missing_ok=True)
+    if coverage_html.exists():
+        shutil.rmtree(coverage_html)
+    coverage_types = normalize_coverage_types(spec.coverage_types)
+    env.update({
+        "HPDCACHE_TCL_COVERAGE": "1" if spec.coverage else "0",
+        "HPDCACHE_TCL_COVERAGE_TYPES": coverage_types,
+        "HPDCACHE_TCL_COVERAGE_SCOPE": spec.coverage_scope,
+        "HPDCACHE_TCL_COVERAGE_UCDB": str(coverage_ucdb),
+        "HPDCACHE_TCL_COVERAGE_NAME": (
+            f"{spec.config}.{spec.test}.{spec.seed}.{uuid.uuid4().hex}"
+        ),
+    })
     env.update(
         {
             "HPDCACHE_TCL_WORK_DIR": str(work_dir),
@@ -104,6 +141,24 @@ def execute_run(spec: RunSpec, *, live: bool = False) -> RunOutcome:
         live=live,
         timeout_seconds=spec.timeout_seconds,
     )
+    coverage = coverage_record(spec.coverage, coverage_types, spec.coverage_scope)
+    if spec.coverage:
+        try:
+            if not nonempty_file(coverage_ucdb):
+                raise RuntimeError(f"coverage UCDB was not produced: {coverage_ucdb}")
+            coverage["ucdb"] = coverage_ucdb.name
+            if spec.generate_coverage_report:
+                generate_coverage_report(
+                    ucdb=coverage_ucdb, html_dir=coverage_html,
+                    text_report=coverage_report, log_path=coverage_log,
+                    console_path=coverage_console, env=env, types=coverage_types,
+                    timeout_seconds=spec.timeout_seconds,
+                )
+                coverage["report"] = coverage_report.name
+                coverage["html"] = str(Path(coverage_html.name) / "index.html")
+            coverage["status"] = "PASS"
+        except (OSError, RuntimeError) as error:
+            coverage["issues"].append(str(error))
     duration = round(time.monotonic() - started, 3)
     result, rendered = generate_reports(
         log_path,
@@ -112,6 +167,7 @@ def execute_run(spec: RunSpec, *, live: bool = False) -> RunOutcome:
         simulator_returncode=returncode,
         console_path=console_path,
         dv_config=spec.config,
+        coverage=coverage,
     )
     return RunOutcome(
         result=result,
@@ -121,4 +177,5 @@ def execute_run(spec: RunSpec, *, live: bool = False) -> RunOutcome:
         report_path=report_path,
         json_path=json_path,
         console_path=console_path,
+        coverage_ucdb=coverage_ucdb if coverage["ucdb"] else None,
     )

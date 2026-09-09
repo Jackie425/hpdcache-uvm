@@ -547,6 +547,14 @@ def render_text(result: dict[str, Any]) -> str:
             f"UVM fatals          : {uvm['FATAL']}",
         ]
     )
+    coverage = result.get("coverage")
+    if coverage:
+        lines.extend(["", "Coverage", "--------", f"Collection/report   : {coverage['status']}"])
+        if coverage.get("enabled"):
+            lines.append(f"Code types / scope  : {coverage['types']} / {coverage['scope']}")
+            for key in ("ucdb", "report", "html"):
+                if coverage.get(key):
+                    lines.append(f"{key.upper():<20}: {coverage[key]}")
     issues = result["incomplete_reasons"] + result["failure_reasons"]
     if issues:
         lines.extend(["", "Issues", "------"])
@@ -561,6 +569,7 @@ def generate_reports(
     simulator_returncode: int | None = None,
     console_path: Path | None = None,
     dv_config: str | None = None,
+    coverage: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str]:
     text = (
         log_path.read_text(encoding="utf-8", errors="replace")
@@ -574,6 +583,12 @@ def generate_reports(
     result = analyze(parsed, simulator_returncode)
     if dv_config is not None:
         result["configuration"] = dv_config
+    if coverage is not None:
+        result["coverage"] = coverage
+        if coverage["enabled"] and coverage["status"] != "PASS":
+            result["incomplete_reasons"].extend(coverage["issues"])
+            if result["status"] == "PASS":
+                result["status"] = "INCOMPLETE"
     rendered = render_text(result)
     text_path.parent.mkdir(parents=True, exist_ok=True)
     json_path.parent.mkdir(parents=True, exist_ok=True)
@@ -630,6 +645,11 @@ def main() -> int:
         else stem.with_suffix(".json")
     )
     previous_returncode, previous_config = _previous_execution(json_path)
+    previous_coverage = None
+    try:
+        previous_coverage = json.loads(json_path.read_text(encoding="utf-8")).get("coverage")
+    except (OSError, ValueError, AttributeError):
+        pass
     console_path = (
         project_path(args.console)
         if args.console
@@ -646,6 +666,7 @@ def main() -> int:
         ),
         console_path=console_path,
         dv_config=args.config or previous_config,
+        coverage=previous_coverage,
     )
     print(rendered, end="")
     return 0 if result["status"] == "PASS" else 1

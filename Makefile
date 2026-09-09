@@ -15,8 +15,12 @@ TESTLIST ?= regression/smoke.yaml
 JOBS ?= 4
 COMPILE_TIMEOUT ?= 1800
 RUN_TIMEOUT ?= 3600
+COVERAGE ?= 1
+COVERAGE_TYPES ?= sbcefx
+COVERAGE_SCOPE ?= /top/dut.
 
 export UVM_VERSION HPDCACHE_DIR CORE_V_VERIF CONFIG_DIR BUILD_DIR FILELIST
+export COVERAGE COVERAGE_TYPES COVERAGE_SCOPE
 
 .PHONY: test regression clean
 
@@ -34,4 +38,4 @@ regression:
 		--timeout-seconds "$(RUN_TIMEOUT)"
 
 clean:
-	rm -rf -- "$(BUILD_DIR)"
+	rm -rf -- build

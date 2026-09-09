@@ -7,6 +7,7 @@ import argparse
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
 import secrets
@@ -19,6 +20,15 @@ import yaml
 from compile import CompileOptions, compile_configs
 from sim_common import PROJECT_ROOT, env_value, project_path, select_dv_configs
 from sim_runner import RunSpec, execute_run
+from coverage_utils import (
+    generate_coverage_report,
+    generate_coverage_summary,
+    merge_coverage_databases,
+    normalize_coverage_types,
+    add_coverage_arguments,
+    validate_coverage_scope,
+    coverage_record,
+)
 
 
 NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
@@ -221,6 +231,9 @@ def run_job(
     uvm_version: str,
     optimized_top: str,
     timeout_seconds: float,
+    coverage: bool,
+    coverage_types: str,
+    coverage_scope: str,
 ) -> dict[str, Any]:
     output_dir = job_output_dir(regression_dir, dv_config, job)
     outcome = execute_run(
@@ -234,6 +247,10 @@ def run_job(
             uvm_version=uvm_version,
             optimized_top=optimized_top,
             timeout_seconds=timeout_seconds,
+            coverage=coverage,
+            coverage_types=coverage_types,
+            coverage_scope=coverage_scope,
+            generate_coverage_report=False,
         )
     )
     report = outcome.result
@@ -280,6 +297,11 @@ def run_job(
             "directory": _relative(output_dir, regression_dir),
             "report": _relative(outcome.report_path, regression_dir),
             "json": _relative(outcome.json_path, regression_dir),
+            "coverage_ucdb": (
+                _relative(outcome.coverage_ucdb, regression_dir)
+                if outcome.coverage_ucdb
+                else None
+            ),
         },
     }
 
@@ -291,6 +313,7 @@ def summarize(
     results: list[dict[str, Any]],
     duration: float,
     requested_jobs: int,
+    coverage: dict[str, Any],
 ) -> dict[str, Any]:
     counts = {
         status.lower(): sum(result["status"] == status for result in results)
@@ -303,6 +326,8 @@ def summarize(
         if counts["fail"]
         else "PASS"
     )
+    if status == "PASS" and coverage["enabled"] and coverage["status"] != "PASS":
+        status = "INCOMPLETE"
     requests = [result["completed_requests"] for result in results]
     return {
         "schema": 1,
@@ -313,6 +338,7 @@ def summarize(
             "configs": list(dv_configs),
             "duration_seconds": round(duration, 3),
             "concurrency": requested_jobs,
+            "coverage": coverage,
         },
         "summary": {
             "total": len(results),
@@ -356,14 +382,44 @@ def render_summary(summary: dict[str, Any]) -> str:
         f"{counts['fail']} failed, {counts['incomplete']} incomplete",
         f"Completed requests  : {counts['completed_requests']}",
         f"Elapsed             : {regression['duration_seconds']:.3f} s",
-        "",
-        "Runs",
-        "----",
-        f"  {'Status':<10} {'Configuration':<{config_width}} "
-        f"{'Test':<{test_width}} {'Sequence':<{sequence_width}} "
-        f"{'Seed':>10} {'Requests':>10} {'Checks':>7} "
-        f"{'Warnings':>8} {'Errors':>6} {'Fatals':>6} {'Time':>9}",
     ]
+    coverage = regression.get("coverage", {})
+    if coverage.get("enabled"):
+        lines.extend(
+            [
+                f"Coverage            : {coverage.get('status', 'UNKNOWN')} "
+                f"(types={coverage.get('types', '-')}, assertions=enabled)",
+                f"Coverage report     : {coverage.get('html') or '-'}",
+                f"Coverage summary    : {coverage.get('summary_report') or '-'}",
+            ]
+        )
+        cov_summary = coverage.get("summary", {})
+        if cov_summary:
+            lines.append(f"Coverage total      : {cov_summary.get('total', 0):.2f}%")
+            for name in (
+                "assertion", "statement", "branch", "condition", "expression",
+                "fsm_states", "fsm_transitions", "fsm", "toggle",
+            ):
+                metric = cov_summary.get("metrics", {}).get(name)
+                if metric:
+                    label = {
+                        "fsm_states": "FSM States",
+                        "fsm_transitions": "FSM Transitions",
+                    }.get(name, name.capitalize())
+                    lines.append(f"  {label:<18}: {metric['coverage']:.2f}% ({metric['hits']}/{metric['bins']} bins)")
+    else:
+        lines.append("Coverage            : DISABLED")
+    lines.extend(
+        [
+            "",
+            "Runs",
+            "----",
+            f"  {'Status':<10} {'Configuration':<{config_width}} "
+            f"{'Test':<{test_width}} {'Sequence':<{sequence_width}} "
+            f"{'Seed':>10} {'Requests':>10} {'Checks':>7} "
+            f"{'Warnings':>8} {'Errors':>6} {'Fatals':>6} {'Time':>9}",
+        ]
+    )
     for result in results:
         uvm = result["uvm"]
         requests = result["completed_requests"]
@@ -382,6 +438,7 @@ def render_summary(summary: dict[str, Any]) -> str:
             f"{result['duration_seconds']:>7.3f} s"
         )
 
+    lines.extend(f"Coverage issue      : {issue}" for issue in coverage.get("issues", []))
     failed = [result for result in results if result["status"] != "PASS"]
     if failed:
         lines.extend(["", "Issues", "------"])
@@ -422,8 +479,57 @@ def incomplete_result(
             "directory": _relative(output_dir, regression_dir),
             "report": _relative(output_dir / "run.rpt", regression_dir),
             "json": _relative(output_dir / "run.json", regression_dir),
+            "coverage_ucdb": None,
         },
     }
+
+
+def collect_regression_coverage(
+    results: list[dict[str, Any]], *, regression_dir: Path, enabled: bool,
+    types: str, scope: str, timeout_seconds: float,
+) -> dict[str, Any]:
+    coverage = coverage_record(enabled, types, scope)
+    if not enabled:
+        return coverage
+    ucdbs = [
+        regression_dir / result["artifacts"]["coverage_ucdb"]
+        for result in results if result["artifacts"].get("coverage_ucdb")
+    ]
+    coverage["expected_runs"] = len(results)
+    coverage["collected_runs"] = len(ucdbs)
+    # Keep available data for debugging failed/incomplete regressions and state
+    # explicitly if any jobs could not contribute a database.
+    if len(ucdbs) != len(results):
+        coverage["issues"].append(f"coverage collected for {len(ucdbs)}/{len(results)} runs")
+    merged = regression_dir / "coverage.ucdb"
+    report = regression_dir / "coverage.rpt"
+    html = regression_dir / "coverage_html"
+    try:
+        merge_coverage_databases(
+            ucdbs, output=merged, log_path=regression_dir / "coverage.merge.log",
+            env=os.environ.copy(), timeout_seconds=timeout_seconds,
+        )
+        coverage["ucdb"] = merged.name
+        generate_coverage_report(
+            ucdb=merged, html_dir=html, text_report=report,
+            log_path=regression_dir / "coverage.report.log",
+            console_path=regression_dir / "coverage.report.console.log",
+            env=os.environ.copy(), types=types, timeout_seconds=timeout_seconds,
+        )
+        coverage["report"] = report.name
+        coverage["html"] = str(Path(html.name) / "index.html")
+        coverage["summary"] = generate_coverage_summary(
+            ucdb=merged,
+            summary_path=regression_dir / "coverage.summary.rpt",
+            log_path=regression_dir / "coverage.summary.log",
+            env=os.environ.copy(), timeout_seconds=timeout_seconds,
+        )
+        coverage["summary_report"] = "coverage.summary.rpt"
+        if not coverage["issues"]:
+            coverage["status"] = "PASS"
+    except (OSError, RuntimeError) as error:
+        coverage["issues"].append(str(error))
+    return coverage
 
 
 def parse_args() -> argparse.Namespace:
@@ -440,6 +546,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--optimized-top", default="hpdcache_uvm_opt")
     parser.add_argument("--compile-timeout-seconds", type=float, default=1800.0)
     parser.add_argument("--timeout-seconds", type=float, default=3600.0)
+    add_coverage_arguments(parser)
     return parser.parse_args()
 
 
@@ -450,6 +557,12 @@ def main() -> int:
         return 2
     if args.timeout_seconds <= 0:
         print("Regression configuration error: --timeout-seconds must be positive")
+        return 2
+    try:
+        coverage_types = normalize_coverage_types(args.coverage_types)
+        validate_coverage_scope(args.coverage_scope)
+    except ValueError as error:
+        print(f"Regression configuration error: {error}")
         return 2
 
     testlist_path = project_path(args.testlist)
@@ -470,11 +583,14 @@ def main() -> int:
                 top=args.top,
                 optimized_top=args.optimized_top,
                 timeout_seconds=args.compile_timeout_seconds,
+                coverage=args.coverage,
+                coverage_types=coverage_types,
+                coverage_scope=args.coverage_scope,
             ),
         )
         if compile_status:
             return compile_status
-    except (OSError, TestlistError, RuntimeError) as error:
+    except (OSError, TestlistError, RuntimeError, ValueError) as error:
         print(f"Regression configuration error: {error}")
         return 2
 
@@ -509,6 +625,9 @@ def main() -> int:
                 uvm_version=args.uvm_version,
                 optimized_top=args.optimized_top,
                 timeout_seconds=args.timeout_seconds,
+                coverage=args.coverage,
+                coverage_types=coverage_types,
+                coverage_scope=args.coverage_scope,
             ): (index, dv_config, job)
             for index, dv_config, job in scheduled
         }
@@ -535,6 +654,11 @@ def main() -> int:
     results.sort(key=lambda result: result["index"])
     for result in results:
         del result["index"]
+    coverage_summary = collect_regression_coverage(
+        results, regression_dir=regression_dir, enabled=args.coverage,
+        types=coverage_types, scope=args.coverage_scope,
+        timeout_seconds=args.timeout_seconds,
+    )
     summary = summarize(
         testlist,
         testlist_path,
@@ -542,6 +666,7 @@ def main() -> int:
         results,
         time.monotonic() - started,
         worker_count,
+        coverage_summary,
     )
     rendered = render_summary(summary)
     report_path = regression_dir / "regression.rpt"

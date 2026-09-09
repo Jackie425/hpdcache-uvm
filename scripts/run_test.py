@@ -8,6 +8,10 @@ import argparse
 from compile import CompileOptions, compile_configs
 from sim_common import env_value, project_path, select_dv_configs
 from sim_runner import RunSpec, execute_run, validate_run_spec
+from coverage_utils import (
+    add_coverage_arguments,
+    normalize_coverage_types, validate_coverage_scope,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -31,6 +35,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--compile-timeout-seconds", type=float, default=1800.0)
     parser.add_argument("--timeout-seconds", type=float, default=3600.0)
     parser.add_argument("--live", action="store_true")
+    add_coverage_arguments(parser)
     parser.add_argument("--extra-arg", action="append", default=[])
     return parser.parse_args()
 
@@ -38,6 +43,8 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     try:
+        coverage_types = normalize_coverage_types(args.coverage_types)
+        validate_coverage_scope(args.coverage_scope)
         build_dir = project_path(args.build_dir)
         config_dir = project_path(env_value("CONFIG_DIR", "config"))
         dv_config = select_dv_configs(
@@ -60,6 +67,9 @@ def main() -> int:
             run_name=args.run_name,
             timeout_seconds=args.timeout_seconds,
             extra_args=tuple(args.extra_arg),
+            coverage=args.coverage,
+            coverage_types=coverage_types,
+            coverage_scope=args.coverage_scope,
         )
         validate_run_spec(run_spec)
         compile_status = compile_configs(
@@ -73,6 +83,9 @@ def main() -> int:
                 optimized_top=args.optimized_top,
                 timeout_seconds=args.compile_timeout_seconds,
                 live=args.live,
+                coverage=args.coverage,
+                coverage_types=coverage_types,
+                coverage_scope=args.coverage_scope,
             ),
         )
         if compile_status:
@@ -80,7 +93,7 @@ def main() -> int:
 
         print(f"Running: config={dv_config} test={args.test} seed={args.seed}")
         outcome = execute_run(run_spec, live=args.live)
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"Test configuration error: {error}")
         return 2
 

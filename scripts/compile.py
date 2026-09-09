@@ -22,6 +22,10 @@ from sim_common import (
     select_dv_configs,
     simulation_environment,
 )
+from coverage_utils import (
+    DEFAULT_COVERAGE_TYPES, DEFAULT_COVERAGE_SCOPE, add_coverage_arguments,
+    normalize_coverage_types, validate_coverage_scope,
+)
 
 
 @dataclass(frozen=True)
@@ -34,6 +38,9 @@ class CompileOptions:
     optimized_top: str = "hpdcache_uvm_opt"
     timeout_seconds: float = 1800.0
     live: bool = False
+    coverage: bool = True
+    coverage_types: str = DEFAULT_COVERAGE_TYPES
+    coverage_scope: str = DEFAULT_COVERAGE_SCOPE
 
 
 def _source_files(paths: Iterable[Path]) -> list[Path]:
@@ -75,6 +82,9 @@ def _compile_signature(
         "top": options.top,
         "uvm_version": options.uvm_version,
         "vsim": str(vsim),
+        "coverage_scope": options.coverage_scope,
+        "coverage": options.coverage,
+        "coverage_types": normalize_coverage_types(options.coverage_types),
     }
     digest.update(json.dumps(settings, sort_keys=True).encode())
     for path in inputs:
@@ -110,6 +120,8 @@ def compile_configs(
 
     if options.timeout_seconds <= 0:
         raise RuntimeError("compile timeout must be positive")
+    coverage_types = normalize_coverage_types(options.coverage_types)
+    validate_coverage_scope(options.coverage_scope)
     dv_configs = select_dv_configs(
         selector, allow_all=True, config_dir=options.config_dir
     )
@@ -152,6 +164,9 @@ def compile_configs(
                     "HPDCACHE_TCL_OPTIMIZED_TOP": options.optimized_top,
                     "HPDCACHE_TCL_COMPILE_LOG": str(compile_log),
                     "HPDCACHE_TCL_OPTIMIZE_LOG": str(optimize_log),
+                    "HPDCACHE_TCL_COVERAGE": "1" if options.coverage else "0",
+                    "HPDCACHE_TCL_COVERAGE_TYPES": coverage_types,
+                    "HPDCACHE_TCL_COVERAGE_SCOPE": options.coverage_scope,
                 }
             )
             print(f"Building: config={dv_config}")
@@ -170,7 +185,13 @@ def compile_configs(
                 return status
             manifest_path.write_text(
                 json.dumps(
-                    {"config": dv_config, "signature": signature},
+                    {
+                        "config": dv_config,
+                        "signature": signature,
+                        "coverage": options.coverage,
+                        "coverage_types": coverage_types,
+                        "coverage_scope": options.coverage_scope,
+                    },
                     indent=2,
                     sort_keys=True,
                 )
@@ -193,6 +214,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--optimized-top", default="hpdcache_uvm_opt")
     parser.add_argument("--timeout-seconds", type=float, default=1800.0)
     parser.add_argument("--live", action="store_true")
+    add_coverage_arguments(parser)
     parser.add_argument("--force", action="store_true")
     return parser.parse_args()
 
@@ -208,10 +230,13 @@ def main() -> int:
         optimized_top=args.optimized_top,
         timeout_seconds=args.timeout_seconds,
         live=args.live,
+        coverage=args.coverage,
+        coverage_types=args.coverage_types,
+        coverage_scope=args.coverage_scope,
     )
     try:
         return compile_configs(args.config, options, force=args.force)
-    except (OSError, RuntimeError) as error:
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"Build configuration error: {error}")
         return 2
 
