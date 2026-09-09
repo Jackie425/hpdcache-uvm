@@ -6,6 +6,6 @@ defaults:
 
 tests:
   - test: hpdcache_random_test
-    runs: 10
+    runs: 100
   - test: hpdcache_atomic_test
-    runs: 1
+    runs: 10
