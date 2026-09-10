@@ -6,6 +6,8 @@ Interface (CMI) agents, sequences, monitors, reference models, and checking
 components that can be reused across HPDcache configurations and verification
 flows.
 
+![HPDcache UVM verification environment](docs/images/env.png)
+
 ## Scope
 
 The environment verifies the main HPDcache request and memory paths through

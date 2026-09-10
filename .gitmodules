@@ -4,5 +4,5 @@
 	branch = fix
 [submodule "modules/core-v-verif"]
 	path = modules/core-v-verif
-	url = https://github.com/Jackie425/core-v-verif.git
-	branch = fix/axi-atomic-memory-response
+	url = https://github.com/openhwgroup/core-v-verif.git
+	branch = master
