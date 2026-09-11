@@ -1,7 +1,7 @@
 [submodule "modules/cv-hpdcache"]
 	path = modules/cv-hpdcache
 	url = https://github.com/Jackie425/cv-hpdcache.git
-	branch = fix
+	branch = master
 [submodule "modules/core-v-verif"]
 	path = modules/core-v-verif
 	url = https://github.com/openhwgroup/core-v-verif.git
