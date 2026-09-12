@@ -30,6 +30,8 @@ class hpdcache_memory_response_model extends memory_response_model #(
     rd_rsp_queue.delete();
     wr_rsp_queue.delete();
     amo_reservation_queue.delete();
+    foreach (m_memory[addr])
+      m_memory[addr].ldex_bytes.delete();
     global_cycle_count = 0;
     rd_rsp_error_counter = 0;
     wr_rsp_error_counter = 0;

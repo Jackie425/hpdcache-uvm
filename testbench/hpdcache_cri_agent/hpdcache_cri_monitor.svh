@@ -56,6 +56,10 @@ class hpdcache_cri_monitor extends uvm_monitor;
   protected function void sample_request();
     hpdcache_cri_req_item item;
 
+    // Accounting is defined at the bus handshake.  Publishing may be delayed
+    // one cycle while a VIPT request's tag is sampled.
+    observed_requests++;
+
     if (vif.mon_cb.req.sid !== hpdcache_req_sid_t'(cfg.requester_id))
       `uvm_error("HPDCACHE_CHK_CRI", $sformatf(
         "request on requester port %0d has SID %0d",
@@ -116,7 +120,6 @@ class hpdcache_cri_monitor extends uvm_monitor;
     hpdcache_cri_item transaction;
     transaction_key_t transaction_key;
 
-    observed_requests++;
     if (item.abort)
       observed_aborts++;
 

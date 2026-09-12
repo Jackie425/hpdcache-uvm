@@ -2,8 +2,8 @@ PYTHON ?= python3
 .DEFAULT_GOAL := test
 
 UVM_VERSION ?= 1.2
-HPDCACHE_DIR ?= modules/cv-hpdcache
-CORE_V_VERIF ?= modules/core-v-verif
+HPDCACHE_DIR ?= cv-hpdcache
+CORE_V_VERIF ?= core-v-verif
 CONFIG_DIR ?= config
 BUILD_DIR ?= build/questa
 FILELIST ?= testbench/hpdcache_uvm.f

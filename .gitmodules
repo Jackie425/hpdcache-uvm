@@ -1,8 +1,8 @@
-[submodule "modules/cv-hpdcache"]
-	path = modules/cv-hpdcache
+[submodule "cv-hpdcache"]
+	path = cv-hpdcache
 	url = https://github.com/Jackie425/cv-hpdcache.git
 	branch = master
-[submodule "modules/core-v-verif"]
-	path = modules/core-v-verif
-	url = https://github.com/openhwgroup/core-v-verif.git
-	branch = master
+[submodule "core-v-verif"]
+	path = core-v-verif
+	url = https://github.com/Jackie425/core-v-verif.git
+	branch = fix/axi2mem-ooo-b-response

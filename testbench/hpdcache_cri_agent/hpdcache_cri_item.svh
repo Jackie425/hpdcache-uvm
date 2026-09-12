@@ -28,10 +28,10 @@ class hpdcache_cri_item extends uvm_sequence_item;
   // data remains the request payload after transaction assembly.
   hpdcache_req_data_t response_data;
 
-  bit                  use_pma_region;
-  hpdcache_req_addr_t  pma_region_base;
-  hpdcache_req_addr_t  pma_region_last;
-  bit                  pma_region_uncacheable;
+  bit                  constrain_addr_range;
+  hpdcache_req_addr_t  addr_range_base;
+  hpdcache_req_addr_t  addr_range_last;
+  bit                  pma_uncacheable;
 
   constraint legal_operation_c {
     op inside {
@@ -127,10 +127,12 @@ class hpdcache_cri_item extends uvm_sequence_item;
     abort -> !phys_indexed;
   }
 
-  constraint configured_pma_region_c {
-    if (use_pma_region) {
-      addr inside {[pma_region_base:pma_region_last]};
-      pma.uncacheable == pma_region_uncacheable;
+  constraint configured_addr_range_c {
+    if (constrain_addr_range) {
+      addr inside {[addr_range_base:addr_range_last]};
+      pma.uncacheable == pma_uncacheable;
+      if (!is_cmo(op))
+        addr <= addr_range_last - ((1 << size) - 1);
     }
   }
 

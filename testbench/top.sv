@@ -231,9 +231,9 @@ module top;
     .id_width  (MEM_ID_WIDTH)
   ) mem_wr_vif(.clk(clk), .rstn(rst_n));
 
-  assign axi_vif.ar_ready = 1'b1;
-  assign axi_vif.aw_ready = 1'b1;
-  assign axi_vif.w_ready  = 1'b1;
+  assign axi_vif.ar_ready = mem_rsp_vif.req_ready_bp;
+  assign axi_vif.aw_ready = mem_rsp_vif.req_ready_bp;
+  assign axi_vif.w_ready  = mem_rsp_vif.req_ready_bp;
 
   assign mem_req_read_ready = axi_vif.ar_ready;
   assign axi_vif.ar_valid  = mem_req_read_valid;

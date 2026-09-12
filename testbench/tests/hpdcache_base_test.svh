@@ -21,17 +21,7 @@ class hpdcache_base_test extends uvm_test;
   protected function void create_env_config();
     env_cfg = hpdcache_env_config::type_id::create("env_cfg");
     env_cfg.pma_cfg = hpdcache_pma_config::type_id::create("pma_cfg");
-    // PMA regions define address-based cacheability; policy hints belong to items.
-    env_cfg.pma_cfg.add_region(
-      hpdcache_req_addr_t'(56'h00000080000000),
-      hpdcache_req_addr_t'(56'h00000080002fff),
-      HPDCACHE_CACHEABLE
-    );
-    env_cfg.pma_cfg.add_region(
-      hpdcache_req_addr_t'(56'h00000080003000),
-      hpdcache_req_addr_t'(56'h00000080003fff),
-      HPDCACHE_UNCACHEABLE
-    );
+    env_cfg.pma_cfg.generate_random_pma_regions();
 
     foreach (env_cfg.cri_agent_cfgs[i]) begin
       env_cfg.cri_agent_cfgs[i] = hpdcache_cri_agent_config::type_id::create(
@@ -42,7 +32,7 @@ class hpdcache_base_test extends uvm_test;
     end
     env_cfg.mem_cfg = memory_rsp_cfg::type_id::create("mem_cfg");
     env_cfg.mem_cfg.m_enable = 1'b1;
-    env_cfg.mem_cfg.rsp_order = IN_ORDER_RSP;
+    env_cfg.mem_cfg.rsp_order = OUT_OF_ORDER_RSP;
     env_cfg.mem_cfg.rsp_mode = NORMAL_RSP;
     env_cfg.mem_cfg.inter_data_cycle_fixed_delay = 0;
     // Keep data/error injection disabled; bounded write-side exclusive-fail
@@ -91,6 +81,10 @@ class hpdcache_base_test extends uvm_test;
     `uvm_info("HPDCACHE_RPT_CONFIG", $sformatf(
       "active_requesters=%0d total_requesters=%0d has_prefetcher=%0d",
       env_cfg.active_agent_num, NREQUESTERS, HAS_PREFETCHER), UVM_NONE)
+    `uvm_info("HPDCACHE_RPT_MEM_CFG", $sformatf(
+      "%s req_ready_low_cycles=%0d",
+      env_cfg.mem_cfg.convert2string(),
+      env.mem_rsp_model.get_bp_req_counter()), UVM_NONE)
     `uvm_info("HPDCACHE_RPT_END", "complete=1", UVM_NONE)
   endfunction
 endclass

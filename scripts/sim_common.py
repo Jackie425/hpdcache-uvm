@@ -86,8 +86,8 @@ def questa_tool(name: str) -> Path:
 def simulation_environment(uvm_version: str) -> dict[str, str]:
     env = os.environ.copy()
     home = questa_home()
-    env.setdefault("HPDCACHE_DIR", env_value("HPDCACHE_DIR", "modules/cv-hpdcache"))
-    env.setdefault("CORE_V_VERIF", env_value("CORE_V_VERIF", "modules/core-v-verif"))
+    env.setdefault("HPDCACHE_DIR", env_value("HPDCACHE_DIR", "cv-hpdcache"))
+    env.setdefault("CORE_V_VERIF", env_value("CORE_V_VERIF", "core-v-verif"))
     env.setdefault("CONFIG_DIR", env_value("CONFIG_DIR", "config"))
     env.setdefault("UVM_SRC", str(home / "verilog_src" / f"uvm-{uvm_version}" / "src"))
     return env

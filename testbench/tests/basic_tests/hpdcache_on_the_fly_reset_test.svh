@@ -49,7 +49,8 @@ class hpdcache_on_the_fly_reset_test extends hpdcache_base_test;
       if (!env.cri_agents[i].cfg.active)
         continue;
       observed_items += env.cri_agents[i].monitor.num_observed_requests();
-      legal_cancellations += env.cri_agents[i].driver.num_reset_cancelled();
+      legal_cancellations +=
+        env.cri_agents[i].driver.num_reset_cancelled_before_acceptance();
     end
 
     if (observed_items + legal_cancellations != planned_items)

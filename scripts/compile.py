@@ -59,8 +59,8 @@ def _compile_signature(
     compile_tcl: Path,
     vsim: Path,
 ) -> str:
-    hpdcache_dir = project_path(env_value("HPDCACHE_DIR", "modules/cv-hpdcache"))
-    core_v_verif = project_path(env_value("CORE_V_VERIF", "modules/core-v-verif"))
+    hpdcache_dir = project_path(env_value("HPDCACHE_DIR", "cv-hpdcache"))
+    core_v_verif = project_path(env_value("CORE_V_VERIF", "core-v-verif"))
     cv_dv_uvm = core_v_verif / "lib" / "cv_dv_utils" / "uvm"
     inputs = _source_files(
         (
